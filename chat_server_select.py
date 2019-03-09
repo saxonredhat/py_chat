@@ -392,6 +392,7 @@ def user_adduser(conn,args):
 		send_msg(conn,u"系统不存在用户%s" % to_username)
 		return
 	add_userid=res[0][0]
+
 	#判断是否已经添加为好友,或者是否已经存在申请请求
 	sql='select id from user_users where userid=%s and friend_userid=%s' % (userid,add_userid)
 	res=sql_query(sql)
@@ -553,6 +554,7 @@ def user_exitgroup(conn,args):
 	
 
 def user_accept(conn,args):
+	cur_userid=get_conn_userid(conn)
 	args_list=args
 	if len(args_list)!=1:
 		send_msg(conn,u'同意请求的操作参数错误')
@@ -568,6 +570,11 @@ def user_accept(conn,args):
 	add_groupid=res[0][3]
 	#判断是加群还是添加好友 
 	if add_userid:
+		#判断当前用户是否有权限执行
+		if cur_userid != add_userid:
+			send_msg(conn,u'您无权执行该操作！')
+			return 1
+			
 		#互加好友操作
 		sql='insert into user_users(userid,friend_userid,created_at) values(%s,%s,now())' % (req_userid,add_userid)
 		sql_dml(sql)
@@ -579,6 +586,17 @@ def user_accept(conn,args):
 		send_msg(conn,u'您已同意添加%s为好友' % user_userid_name(add_userid))
 
 	if add_groupid:
+		#判断当前用户是否是群主,非群主不能执行该操作
+		sql='select own_userid from `group` where id=%s' % add_groupid
+		res=sql_query(sql)
+		if not res:
+			send_msg(conn,u'遇到UF0！')
+			return
+		own_userid=res[0][0]
+		if cur_userid != own_userid:
+			send_msg(conn,u'您非该群的群主，无权执行该操作！')
+			return 2 
+		
 		#把用户加入群
 		sql='insert into group_users(userid,groupid,created_at) values(%s,%s,now())' % (req_userid,add_groupid)
 		sql_dml(sql)
@@ -607,6 +625,7 @@ def user_accept(conn,args):
 	sql_dml(sql)
 
 def user_reject(conn,args):
+	cur_userid=get_conn_userid(conn)
 	args_list=args
 	if len(args_list)!=1:
 		send_msg(conn,u'拒绝请求的操作参数错误')
@@ -623,11 +642,25 @@ def user_reject(conn,args):
 
 	#如果是添加好友 
 	if add_userid:
+		#判断当前用户是否有权限执行
+		if cur_userid != add_userid:
+			send_msg(conn,u'您无权执行该操作！')
+			return 1
 		notice_content=u'用户%s已经婉拒了您添加好友的请求！' % user_userid_name(add_userid)
 		send_msg(conn,u'您已拒绝用户%s的添加好友申请' % user_userid_name(add_userid))
 
 	#如果是添加群
 	if add_groupid:
+		#判断当前用户是否是群主,非群主不能执行该操作
+		sql='select own_userid from `group` where id=%s' % add_groupid
+		res=sql_query(sql)
+		if not res:
+			send_msg(conn,u'遇到UF0！')
+			return
+		own_userid=res[0][0]
+		if cur_userid != own_userid:
+			send_msg(conn,u'您非该群的群主，无权执行该操作！')
+			return 2 
 		#获取群的信息
 		sql='select id,name,own_userid from `group` where id=%s' % add_groupid
 		res=sql_query(sql)
@@ -856,11 +889,11 @@ def user_delgroup(conn,args):
 	if res:
 		for r in res:
 			to_userid=r[0]
-			notince_content='[系统消息] 群主已解散群[%s |ID:%s]！' % (group_name,groupid)
+			notice_content='[系统消息] 群主已解散群[%s |ID:%s]！' % (group_name,groupid)
 			#判断用户是否在线
 			if user_is_online(to_userid):
 				to_conn=get_userid_conn(to_userid)
-				send_msg(to_conn,notince_content)
+				send_msg(to_conn,notice_content)
 			else:
 				notice_sql='insert into user_notice(userid,content,status,created_at) values(%s,"%s",0,now())' % (to_userid,notice_content)
 				sql_dml(notice_sql)
