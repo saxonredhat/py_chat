@@ -393,6 +393,11 @@ def user_adduser(conn,args):
 		return
 	add_userid=res[0][0]
 
+	#判断是否添加的是自己
+	if userid == add_userid:
+		send_msg(conn,u"不能添加自己为好友！")
+		return 1 
+
 	#判断是否已经添加为好友,或者是否已经存在申请请求
 	sql='select id from user_users where userid=%s and friend_userid=%s' % (userid,add_userid)
 	res=sql_query(sql)
