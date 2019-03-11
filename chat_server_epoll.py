@@ -1,3 +1,8 @@
+#coding:utf-8
+######################
+# 作者: SheYinsong   #
+# 时间: 2019-03-12   #
+######################
 import sys
 import socket
 import time
@@ -148,6 +153,24 @@ def user_name_userid(username):
 		return -1 
 	return res[0][0]
 
+def get_userid(username):
+	sql='select id from user where username="%s" LIMIT 1' % username
+	try:
+		userid=sql_query(sql)[0][0]
+	except:
+		userid=-1
+	return userid
+
+def user_is_online(userid):
+	for uid,conn_user in userid_to_socket.items():
+		if userid == uid:
+			return True
+	return False
+
+def get_userid_conn(userid):
+	for uid,conn_user in userid_to_socket.items():
+		if userid == uid:
+			return conn_user
 
 def user_auth(user,pwd):
 	sql="select password from user where username='%s' LIMIT 1" % user
@@ -216,15 +239,6 @@ def user_conn_auth(conn,cli_ip,cli_port):
 				return False
 			return True
 			
-def get_userid(username):
-	sql='select id from user where username="%s" LIMIT 1' % username
-	try:
-		userid=sql_query(sql)[0][0]
-	except:
-		userid=-1
-	return userid
-			
-
 def push_new_msg(conn,user):
 	#获取用户id
 	sql='select id from user where username="%s" LIMIT 1' % user
@@ -318,19 +332,6 @@ def push_new_msg(conn,user):
 			send_msg(conn,r[1])
 			sql='update user_notice set status=1 where id=%s' % r[0]
 			sql_dml(sql)
-	
-
-def user_is_online(userid):
-	for uid,conn_user in userid_to_socket.items():
-		if userid == uid:
-			return True
-	return False
-
-def get_userid_conn(userid):
-	for uid,conn_user in userid_to_socket.items():
-		if userid == uid:
-			return conn_user
-	
 
 def user_msg(conn,args):
 	from_userid=get_conn_userid(conn)
@@ -415,17 +416,6 @@ def user_gmsg(conn,args):
 			else:
 				notice_sql='insert into user_notice(userid,content,status,created_at) values(%s,"%s",0,now())' % (to_userid,notice_content)
 				sql_dml(notice_sql)
-
-def handle_new_conn(conn,cli_ip,cli_port):
-	pass
-
-def user_userid_name(userid):
-	sql='select username from user where id=%s' % userid
-	res=sql_query(sql)
-	if not res:
-		return ''
-	return res[0][0]
-	
 
 def user_adduser(conn,args):
 	userid=get_conn_userid(conn)	
@@ -603,8 +593,6 @@ def user_exitgroup(conn,args):
 	else:
 		notice_sql='insert into user_notice(userid,content,status,created_at) values(%s,"%s",0,now())' % (own_userid,notice_content)
 		sql_dml(notice_sql)
-	
-
 	
 
 def user_accept(conn,args):
@@ -961,27 +949,6 @@ def user_delgroup(conn,args):
 	sql_dml(sql)
 
 	send_msg(conn,'[系统消息] 群[%s |ID:%s]已解散！' % (group_name,groupid))
-
-
-def single_login(user):
-	try:
-		#获取用户id
-		userid=user_name_userid(user)	
-		#获取用户sock
-		conn=get_userid_conn(userid)
-		#对用户发送sock请求
-		send_msg(conn,'该账号在其他地方登录，您被迫已下线！')
-		fd=conn.fileno()
-		epoll.unregister(conn)
-		#删除这个用户的队列
-		del userid_to_socket[userid] 
-		#删除fd2sock_在线列表
-		del auth_fd_to_socket[fd]
-		#删除这个用户的连接
-		del message_queue[fd]
-		conn.close()	
-	except:
-		pass
 
 def close_clear_all(conn,fd):
 	print("清理客户端中...")
