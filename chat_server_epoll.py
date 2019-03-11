@@ -1180,8 +1180,6 @@ def start_server():
 							if cmd == 'echo':
 								echo_reply=message.split(' ')[1:]
 								send_msg(c_sock,' '.join(echo_reply))
-							elif cmd == 'help' or cmd == '?':
-								send_msg(c_sock,cmd_help)
 							elif cmd == 'close':
 								print(u'[ %s ] 客户端和服务器断开连接' % time.strftime("%Y-%m-%d %X"))
 								send_msg(c_sock,u'您已经与服务器断开连接')
@@ -1190,7 +1188,7 @@ def start_server():
 								fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 								continue
 						except queue.Empty:
-							prompt_auth_msg=u'请输入用户名密码进行登录!\n命令格式:auth username password'
+							prompt_auth_msg=u'请输入用户名密码登录！！！\n命令格式:auth 用户名 密码'
 							send_msg(c_sock,prompt_auth_msg)
 						try:
 							epoll.modify(fd,select.EPOLLIN)
@@ -1236,8 +1234,8 @@ def start_server():
 						elif cmd == 'auth':
 							send_msg(c_sock,u'提示!您已认证！')
 						elif cmd not in noargs_cmd+args_cmd:
-							print(u'[ %s ] 客户端的命令不支持' % time.strftime("%Y-%m-%d %X"))
-							send_msg(c_sock,u'输入的命令不支持')
+							print(u'[ %s ] 客户端的命令不支持,请使用 help/?' % time.strftime("%Y-%m-%d %X"))
+							send_msg(c_sock,u'输入的命令不支持,请使用 help/?')
 						else:
 							args=message.split(' ')[1:]
 							switch={
