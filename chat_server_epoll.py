@@ -1099,7 +1099,6 @@ def start_server():
 			print("有"+str(len(events))+"个新事件，开始处理......")
 			#如果有事件发生,迭代读取事件,并且处理事件
 			for fd,event in events: 
-				print(s.fileno(),fd)
 				#判断是否为服务器监听的socket
 				if fd == s.fileno():
 					#处理新连接
@@ -1124,14 +1123,14 @@ def start_server():
 							print(u'[ %s ] 获取客户端数据异常' % time.strftime("%Y-%m-%d %X"))
 							err_msg=u'sys 数据包异常'
 							message_queue[fd].put(err_msg)
-							epoll.modify(fd,select.EPOLLOUT)
+							epoll.modify(fd,select.EPOLLHUP)
 							continue
 						#判断包头字段里填入的长度和实际收到的是否一致	
 						if len(data)!=length:
 							print(u'[ %s ] 客户端数据包长度异常' % time.strftime("%Y-%m-%d %X"))
 							err_msg=u'sys 数据包长度异常'
 							message_queue[fd].put(err_msg)
-							epoll.modify(fd,select.EPOLLOUT)
+							epoll.modify(fd,select.EPOLLHUP)
 							continue
 
 						#判断命令是否为auth,是，则进行认证，否则跳转到EPOLLOUT
@@ -1191,14 +1190,14 @@ def start_server():
 							print(u'[ %s ] 获取客户端数据异常' % time.strftime("%Y-%m-%d %X"))
 							err_msg=u'sys 数据包异常'
 							message_queue[fd].put(err_msg)
-							epoll.modify(fd,select.EPOLLOUT)
+							epoll.modify(fd,select.EPOLLHUP)
 							continue
 						#判断包头字段里填入的长度和实际收到的是否一致	
 						if len(data)!=length:
 							print(u'[ %s ] 客户端数据包长度异常' % time.strftime("%Y-%m-%d %X"))
 							err_msg=u'sys 数据包异常'
 							message_queue[fd].put(err_msg)
-							epoll.modify(fd,select.EPOLLOUT)
+							epoll.modify(fd,select.EPOLLHUP)
 							continue
 						
 						#把数据存入队列
@@ -1276,12 +1275,29 @@ def start_server():
 								'dg': user_delgroup
 							}
 							switch[cmd](c_sock,args)
-						epoll.modify(fd,select.EPOLLIN)
-							
+						try:
+							epoll.modify(fd,select.EPOLLIN)
+						except:
+							#从在线userid2sock删除
+							del_online_sock(c_sock)
+							#从在线fd2sock字典删除
+							del online_fd2sock_list[fd] 
+							#从queue队列中删除
+							del message_queue[fd]
+							#从fd_to_sock列表删除
+							del fd_to_socket[fd]
+							#从epoll删除
+							epoll.unregister(fd)
+							#关闭当前conn.close()
+							c_sock.close()
+						print("client_sock_list:",client_sock_list)
+						print("online_fd2sock_list:",online_fd2sock_list)
+						print("message_queue:",message_queue)
+						print("fd_to_socket:",fd_to_socket)
 				#关闭事件
 				elif event & select.EPOLLHUP:
 					#从在线userid2sock删除
-					del_online_sock(conn)
+					del_online_sock(c_sock)
 					#从在线fd2sock字典删除
 					del online_fd2sock_list[fd] 
 					#从queue队列中删除
@@ -1291,7 +1307,7 @@ def start_server():
 					#从epoll删除
 					epoll.unregister(fd)
 					#关闭当前conn.close()
-					conn.close()
+					c_sock.close()
 
 if __name__=='__main__':
 	start_server()
