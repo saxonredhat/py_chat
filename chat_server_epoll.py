@@ -32,10 +32,13 @@ noargs_cmd=['listfriends','lf','listgroup','lg','listallgroup','lag']
 args_cmd=['msg','m','gmsg','gm','adduser','au','deluser','du','addgroup','ag','exitgroup','eg','reject','rj','accept','ac','creategroup','cg','delgroup','dg','listgroupusers','lgu']
 
 #活动的客户端socket列表
-client_sock_list={}
+userid_to_socket={}
+
+#认证在线socket列表
+auth_fd_to_socket={}
 
 #在线socket列表
-online_fd2sock_list={}
+fd_to_socket={}
 
 #消息字段队列
 message_queue={}
@@ -45,7 +48,7 @@ epoll=select.epoll()
 
 
 def get_conn_userid(conn):
-	for userid,conn_user in client_sock_list.items():
+	for userid,conn_user in userid_to_socket.items():
 		if conn == conn_user:
 			return userid
 	return -1
@@ -53,7 +56,7 @@ def get_conn_userid(conn):
 def del_online_sock(conn):
 	userid=get_conn_userid(conn)
 	if userid>0:
-		del client_sock_list[userid]
+		del userid_to_socket[userid]
 
 def send_msg(conn,msg):
 	msg_len=struct.pack('H',len(bytes(msg,encoding='utf-8')))
@@ -282,13 +285,13 @@ def push_new_msg(conn,user):
 	
 
 def user_is_online(userid):
-	for uid,conn_user in client_sock_list.items():
+	for uid,conn_user in userid_to_socket.items():
 		if userid == uid:
 			return True
 	return False
 
 def get_userid_conn(userid):
-	for uid,conn_user in client_sock_list.items():
+	for uid,conn_user in userid_to_socket.items():
 		if userid == uid:
 			return conn_user
 	
@@ -935,9 +938,9 @@ def single_login(user):
 		fd=conn.fileno()
 		epoll.unregister(conn)
 		#删除这个用户的队列
-		del client_sock_list[userid] 
+		del userid_to_socket[userid] 
 		#删除fd2sock_在线列表
-		del online_fd2sock_list[fd]
+		del auth_fd_to_socket[fd]
 		#删除这个用户的连接
 		del message_queue[fd]
 		conn.close()	
@@ -992,7 +995,7 @@ def accept(sock,mask):
 			#推送消息
 			push_new_msg(conn,user)
 			#添加到在线用户列表
-			client_sock_list[userid]=conn
+			userid_to_socket[userid]=conn
 			#注册到selectors
 			sel.register(conn,selectors.EVENT_READ,read)
 			break
@@ -1071,6 +1074,26 @@ def read(conn,mask):
 		'dg': user_delgroup
 	}
 	switch[cmd](conn,args)
+
+def close_clear_all(conn,fd):
+	print("执行清理工作。。。")
+	epoll.unregister(fd)
+	#从在线userid2sock删除
+	del_online_sock(conn)
+	#从queue队列中删除
+	del message_queue[fd]
+	#从在线fd2sock字典删除
+	if fd in auth_fd_to_socket.keys():
+		del auth_fd_to_socket[fd] 
+	fd_to_socket[fd].close()
+	del fd_to_socket[fd]
+	
+	#从fd_to_sock列表删除
+	#从epoll删除
+	#epoll.unregister(fd)
+	#关闭当前conn.close()
+	#conn.close()
+
 				
 def start_server():
 	#创建socket
@@ -1085,11 +1108,15 @@ def start_server():
 		#注册socket fileno到epoll上面
 		epoll.register(s.fileno(),select.EPOLLIN)
 		#文件描述符到socket字典
-		fd_to_socket={s.fileno():s,}
+		fd_to_socket[s.fileno()]=s
 		#文件描述符到队列的映射
 		print("启动chat服务器%s:%s,并且注册到epoll!"%(host,port))
 		print("等待客户端的连接...")
 		while True:
+			print("数量:%s ###userid_to_socket###:" % len(userid_to_socket),userid_to_socket)
+			print("数量:%s ###auth_fd_to_socket###:" % len(auth_fd_to_socket),auth_fd_to_socket)
+			print("数量:%s ###fd_to_socket###:" % len(fd_to_socket),fd_to_socket)
+			print("数量:%s ###message_queue###:" % len(message_queue),message_queue)
 			#轮询注册的事件集合，返回文件句柄，对应的事件
 			events=epoll.poll(10)
 			print("poll轮询超时...")
@@ -1100,13 +1127,23 @@ def start_server():
 			#如果有事件发生,迭代读取事件,并且处理事件
 			for fd,event in events: 
 				#判断是否为服务器监听的socket
+				print("fd的类型@@@@@@@@@@@@:",type(fd))
+				print("当前事件ID:",'{0:08b}'.format(event))
+				print("当前select.EPOLLIN事件:",'{0:08b}'.format(select.EPOLLIN))
+				print("当前select.EPOLLOUT事件:",'{0:08b}'.format(select.EPOLLOUT))
+				print("当前select.EPOLLHUP事件:",'{0:08b}'.format(select.EPOLLHUP))
 				if fd == s.fileno():
 					#处理新连接
 					new_conn,addr=s.accept()
 					new_conn.setblocking(False)
 					c_fd=new_conn.fileno()
 					#注册到epoll中
-					epoll.register(c_fd,select.EPOLLOUT)
+					try:
+						epoll.register(c_fd,select.EPOLLOUT)
+					except:
+						epoll.unregister(c_fd)
+						new_conn.close()
+						continue
 					#添加到fd_to_socket字典表中
 					fd_to_socket[c_fd]=new_conn
 					message_queue[c_fd]=queue.Queue()
@@ -1114,7 +1151,7 @@ def start_server():
 				elif event & select.EPOLLIN:
 					#判断用户是否登录,如果没登录就转到EPOLLOUT
 					c_sock=fd_to_socket[fd]
-					if fd not in online_fd2sock_list.keys():
+					if fd not in auth_fd_to_socket.keys():
 						#获取数据
 						try:
 							length=struct.unpack('H',c_sock.recv(2))[0]
@@ -1123,14 +1160,15 @@ def start_server():
 							print(u'[ %s ] 获取客户端数据异常' % time.strftime("%Y-%m-%d %X"))
 							err_msg=u'sys 数据包异常'
 							message_queue[fd].put(err_msg)
-							epoll.modify(fd,select.EPOLLHUP)
+							#获取客户端数据异常，猜测客户端非正常关闭
+							epoll.modify(fd,0)
+							fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 							continue
 						#判断包头字段里填入的长度和实际收到的是否一致	
 						if len(data)!=length:
 							print(u'[ %s ] 客户端数据包长度异常' % time.strftime("%Y-%m-%d %X"))
 							err_msg=u'sys 数据包长度异常'
 							message_queue[fd].put(err_msg)
-							epoll.modify(fd,select.EPOLLHUP)
 							continue
 
 						#判断命令是否为auth,是，则进行认证，否则跳转到EPOLLOUT
@@ -1143,7 +1181,10 @@ def start_server():
 									user=data.decode('utf-8').split(' ')[1]
 									pwd=data.decode('utf-8').split(' ')[2]
 								except:
-									epoll.modify(fd,select.EPOLLOUT)	
+									try:
+										epoll.modify(fd,select.EPOLLOUT)	
+									except:
+										close_clear_all(c_sock,fd)
 									continue
 
 								#获取用户userid
@@ -1152,7 +1193,10 @@ def start_server():
 								if userid < 0:
 									login_err_msg=u'sys 用户名不存在！'
 									message_queue[fd].put(login_err_msg)
-									epoll.modify(fd,select.EPOLLOUT)	
+									try:
+										epoll.modify(fd,select.EPOLLOUT)	
+									except:
+										close_clear_all(c_sock,fd)
 									continue
 							
 								#进行认证
@@ -1162,22 +1206,32 @@ def start_server():
 									#推送消息
 									push_new_msg(c_sock,user)
 									#添加到在线用户列表
-									client_sock_list[userid]=c_sock
+									userid_to_socket[userid]=c_sock
 									#添加到在线fd2sock列表
-									online_fd2sock_list[fd]=c_sock
+									auth_fd_to_socket[fd]=c_sock
 									#提示登录成功的信息
 									login_ok=u'sys 登录成功!'
 									message_queue[fd].put(login_ok)
-									epoll.modify(fd,select.EPOLLOUT)	
+									try:
+										print("[ %s ]开始修改epollout!" % time.ctime())
+										epoll.modify(fd,select.EPOLLOUT)	
+									except:
+										close_clear_all(c_sock,fd)
 									continue
 								else:
 									login_fail=u'sys 登录失败，密码错误！'
 									message_queue[fd].put(login_fail)
-									epoll.modify(fd,select.EPOLLOUT)	
+									try:
+										epoll.modify(fd,select.EPOLLOUT)	
+									except:
+										close_clear_all(c_sock,fd)
 									continue
 							#跳转到EPOLLOUT
 							else:
-								epoll.modify(fd,select.EPOLLOUT)	
+								try:
+									epoll.modify(fd,select.EPOLLOUT)	
+								except:
+									close_clear_all(c_sock,fd)
 								continue
 
 					#如果已登录，则提取数据，放入到Quene中，跳转到EPOLLOUT
@@ -1190,26 +1244,34 @@ def start_server():
 							print(u'[ %s ] 获取客户端数据异常' % time.strftime("%Y-%m-%d %X"))
 							err_msg=u'sys 数据包异常'
 							message_queue[fd].put(err_msg)
-							epoll.modify(fd,select.EPOLLHUP)
+							epoll.modify(fd,0)
+							fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 							continue
 						#判断包头字段里填入的长度和实际收到的是否一致	
 						if len(data)!=length:
 							print(u'[ %s ] 客户端数据包长度异常' % time.strftime("%Y-%m-%d %X"))
 							err_msg=u'sys 数据包异常'
 							message_queue[fd].put(err_msg)
-							epoll.modify(fd,select.EPOLLHUP)
+							try:
+								epoll.modify(fd,select.EPOLLHUP)
+							except:
+								close_clear_all(c_sock,fd)
 							continue
 						
 						#把数据存入队列
 						message_queue[fd].put(data.decode('utf-8'))
-						epoll.modify(fd,select.EPOLLOUT)	
+						try:
+							epoll.modify(fd,select.EPOLLOUT)	
+						except:
+							close_clear_all(c_sock,fd)
 						
 				#写事件
 				elif event & select.EPOLLOUT:	
+					print("[ %s ]进入epollout!" % time.ctime())
 					#判断用户是否登录,如果没登录就推送登录提醒消息
 					c_sock=fd_to_socket[fd]
-					print(fd,online_fd2sock_list.keys())
-					if fd not in online_fd2sock_list.keys():
+					print(fd,auth_fd_to_socket.keys())
+					if fd not in auth_fd_to_socket.keys():
 						#获取队列中的内容
 						try:
 							message=message_queue[fd].get_nowait()
@@ -1217,7 +1279,10 @@ def start_server():
 						except queue.Empty:
 							prompt_auth_msg=u'请输入用户名密码进行登录!\n命令格式:auth username password'
 							send_msg(c_sock,prompt_auth_msg)
-						epoll.modify(fd,select.EPOLLIN)
+						try:
+							epoll.modify(fd,select.EPOLLIN)
+						except:
+							close_clear_all(c_sock,fd)
 						continue
 					#如果已经登录则推送，获取队列中的内容，判断消息的类别，调用不同的函数处理
 					else:
@@ -1225,7 +1290,10 @@ def start_server():
 						try:
 							message=message_queue[fd].get_nowait()
 						except queue.Empty:
-							epoll.modify(fd,select.EPOLLIN)
+							try:
+								epoll.modify(fd,select.EPOLLIN)
+							except:
+								close_clear_all(c_sock,fd)
 							continue
 						cmd=message.split(' ')[0]
 						#判断是否是服务器的信息
@@ -1235,7 +1303,9 @@ def start_server():
 						elif cmd == 'close':
 							print(u'[ %s ] 客户端和服务器断开连接' % time.strftime("%Y-%m-%d %X"))
 							send_msg(c_sock,u'您已经与服务器断开连接')
-							epoll.modify(fd,select.EPOLLHUP)
+							#关闭连接
+							epoll.modify(fd,0)
+							auth_fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 							continue
 						elif cmd == 'auth':
 							send_msg(c_sock,u'提示!您已认证！')
@@ -1278,36 +1348,11 @@ def start_server():
 						try:
 							epoll.modify(fd,select.EPOLLIN)
 						except:
-							#从在线userid2sock删除
-							del_online_sock(c_sock)
-							#从在线fd2sock字典删除
-							del online_fd2sock_list[fd] 
-							#从queue队列中删除
-							del message_queue[fd]
-							#从fd_to_sock列表删除
-							del fd_to_socket[fd]
-							#从epoll删除
-							epoll.unregister(fd)
-							#关闭当前conn.close()
-							c_sock.close()
-						print("client_sock_list:",client_sock_list)
-						print("online_fd2sock_list:",online_fd2sock_list)
-						print("message_queue:",message_queue)
-						print("fd_to_socket:",fd_to_socket)
+							close_clear_all(c_sock,fd)
 				#关闭事件
 				elif event & select.EPOLLHUP:
-					#从在线userid2sock删除
-					del_online_sock(c_sock)
-					#从在线fd2sock字典删除
-					del online_fd2sock_list[fd] 
-					#从queue队列中删除
-					del message_queue[fd]
-					#从fd_to_sock列表删除
-					del fd_to_socket[fd]
-					#从epoll删除
-					epoll.unregister(fd)
-					#关闭当前conn.close()
-					c_sock.close()
+					print("进入到EPOLLHUP中")
+					close_clear_all(c_sock,fd)
 
 if __name__=='__main__':
 	start_server()
