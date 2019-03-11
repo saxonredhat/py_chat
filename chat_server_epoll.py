@@ -26,10 +26,46 @@ except:
 	port=6900
 
 #无参数命令
-noargs_cmd=['listfriends','lf','listgroup','lg','listallgroup','lag']
+noargs_cmd=['listfriends','lf','listgroup','lg','listallgroup','lag','close','logout']
 
 #参数命令
-args_cmd=['msg','m','gmsg','gm','adduser','au','deluser','du','addgroup','ag','exitgroup','eg','reject','rj','accept','ac','creategroup','cg','delgroup','dg','listgroupusers','lgu']
+args_cmd=['msg','m','gmsg','gm','adduser','au','deluser','du','addgroup','ag','exitgroup','eg','reject','rj','accept','ac','creategroup','cg','delgroup','dg','listgroupusers','lgu','auth','echo']
+
+#命令帮助
+cmd_help="""
+	 ===============================================
+	|                                               |
+	|                命令使用说明:                  |
+	|                                               |
+	 ===============================================
+	|命令     参数1      参数2   (说明)             | 
+	 ===============================================
+	|auth     用户名     密码    (登录系统)         |
+	|msg/m    用户名     消息    (给用户发送消息)   |
+	|gmsg/gm  群ID       消息    (给群发送消息)     |
+	 ===============================================
+	|命令                参数    (说明)             |
+	 ===============================================
+	|echo                消息    (回显消息)         |
+	|adduser/au          用户名  (添加好友)         |
+	|deluser/du          用户名  (删除好友)         |
+	|creategroup/cg      群名    (建群)             |
+	|delgroup/dg         群ID    (删群)             |
+	|addgroup/ag         群ID    (加群)             |
+	|exitgroup/eg        群ID    (退群)             |
+	|reject/rj           请求ID  (同意加好友|进群)  |
+	|accept/ac           请求ID  (拒绝加好友|进群)  |
+	|listgroupusers/lgu  群ID    (列出群成员信息)   |
+	 ===============================================
+	|命令                (说明)                     |
+	 ===============================================
+	|listfriends/lf      (列出好友)                 |
+	|listgroup/lg        (列出创建的群|列出加入的群)|
+	|listallgroup/lag    (列出系统所有的群)         |
+	|logout              (退出)                     |
+	|close               (关闭对话)                 |
+	 ===============================================
+"""
 
 #活动的客户端socket列表
 userid_to_socket={}
@@ -947,136 +983,8 @@ def single_login(user):
 	except:
 		pass
 
-def accept(sock,mask):
-	conn,addr=sock.accept()
-	print(u'[ %s ] 新客户端连接 -- %s:%s' % (time.strftime("%Y-%m-%d %X"),addr[0],addr[1]))
-	#对用户发送提示语,提示他进行认证
-	prompt_auth_msg=u'欢迎，请输入用户名，密码进行登录!\n登录命令格式:auth username password'
-	send_msg(conn,prompt_auth_msg)
-	while True:
-		#获取用户命令信息
-		try:
-			data=get_data(conn)
-		except:
-			conn.close()
-			break
-			
-		try:
-			cmd=data.decode('utf-8').split(' ')[0]
-			if cmd !='auth':
-				print(u'客户端应该输入认证命令')
-				login_msg=u'请登录，才能操作!\n登录命令格式:auth username password'
-				send_msg(conn,login_msg)
-				continue	
-			user=data.decode('utf-8').split(' ')[1]	
-			pwd=data.decode('utf-8').split(' ')[2]
-			
-		except:
-			login_err_msg=u'登录命令格式不正确！\n登录命令格式:auth username password'
-			send_msg(conn,login_err_msg)
-			print(login_err_msg)
-			continue
-
-		#获取用户userid
-		userid=user_name_userid(user)
-		if userid < 0:
-			login_err_msg=u'用户名不存在！'
-			send_msg(conn,login_err_msg)
-			print(login_err_msg)
-			continue
-	
-		#进行认证，如果认证成功放入到selector
-		if user_auth(user,pwd):
-			#注销其他客户端的连接
-			single_login(user)
-			#提示登录成功的信息
-			success_msg=u'登录成功!'
-			send_msg(conn,success_msg)
-			#推送消息
-			push_new_msg(conn,user)
-			#添加到在线用户列表
-			userid_to_socket[userid]=conn
-			#注册到selectors
-			sel.register(conn,selectors.EVENT_READ,read)
-			break
-		else:
-			login_err_msg=u'登录失败，密码错误！'
-			send_msg(conn,login_err_msg)
-			print(login_err_msg)
-
-def read(conn,mask):
-	try:
-		length=struct.unpack('H',conn.recv(2))[0]
-		data=conn.recv(int(length))
-	except:
-		try:
-			del_online_sock(conn)
-			sel.unregister(conn)
-			conn.close()	
-			return 1
-		except:
-			print(u'客户端异常关闭')
-			return 2
-
-	print("length:%s data:%s" % (length,data.decode('utf-8')))
-	if len(data)!=length:
-		print(u'[ %s ] 客户端认证异常' % time.strftime("%Y-%m-%d %X"))
-		pkt_err_msg=u'数据包异常'
-		send_msg(conn,pkt_err_msg)
-		return 1
-	cmd=data.decode('utf-8').split(' ')[0]
-	if cmd == 'close':
-		print(u'[ %s ] 客户端与服务器端口连接' % time.strftime("%Y-%m-%d %X"))
-		send_msg(conn,u'您已经与服务器端口连接')
-		#从在线列表断开
-		del_online_sock(conn)
-		#从selector删除
-		sel.unregister(conn)
-		#关闭当前conn.close()
-		conn.close()
-		return 2
-	if cmd == 'auth':
-		send_msg(conn,u'提示!您已认证！')
-		return 3
-	if cmd not in noargs_cmd+args_cmd:
-		print(u'[ %s ] 客户端的命令不支持' % time.strftime("%Y-%m-%d %X"))
-		send_msg(conn,u'输入的命令服务器不支持')
-		return 3
-	args=data.decode('utf-8').split(' ')[1:]
-	switch={
-		'msg': user_msg,
-		'm': user_msg,
-		'gmsg': user_gmsg,
-		'gm': user_gmsg,
-		'adduser': user_adduser,
-		'au': user_adduser,
-		'deluser': user_deluser,
-		'du': user_deluser,
-		'addgroup': user_addgroup,
-		'ag': user_addgroup,
-		'exitgroup': user_exitgroup,
-		'eg': user_exitgroup,
-		'reject': user_reject,
-		'rj': user_reject,
-		'accept': user_accept,
-		'ac': user_accept,
-		'listfriends': user_listfriends,
-		'lf': user_listfriends,
-		'listgroup': user_listgroup,
-		'lg': user_listgroup,
-		'listallgroup': user_listallgroup,
-		'lag': user_listallgroup,
-		'listgroupusers': user_listgroupusers,
-		'lgu': user_listgroupusers,
-		'creategroup': user_creategroup,
-		'cg': user_creategroup,
-		'delgroup': user_delgroup,
-		'dg': user_delgroup
-	}
-	switch[cmd](conn,args)
-
 def close_clear_all(conn,fd):
-	print("执行清理工作。。。")
+	print("清理客户端中...")
 	epoll.unregister(fd)
 	#从在线userid2sock删除
 	del_online_sock(conn)
@@ -1087,12 +995,6 @@ def close_clear_all(conn,fd):
 		del auth_fd_to_socket[fd] 
 	fd_to_socket[fd].close()
 	del fd_to_socket[fd]
-	
-	#从fd_to_sock列表删除
-	#从epoll删除
-	#epoll.unregister(fd)
-	#关闭当前conn.close()
-	#conn.close()
 
 				
 def start_server():
@@ -1102,7 +1004,7 @@ def start_server():
 		s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		s.bind((host,port))
 		#监听
-		s.listen(100)
+		s.listen(10000)
 		#设置非阻塞
 		s.setblocking(False)
 		#注册socket fileno到epoll上面
@@ -1158,16 +1060,20 @@ def start_server():
 							data=c_sock.recv(int(length))
 						except:
 							print(u'[ %s ] 获取客户端数据异常' % time.strftime("%Y-%m-%d %X"))
-							err_msg=u'sys 数据包异常'
+							err_msg=u'echo 数据包异常'
 							message_queue[fd].put(err_msg)
 							#获取客户端数据异常，猜测客户端非正常关闭
 							epoll.modify(fd,0)
-							fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
+							try:
+								fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
+							except:
+								close_clear_all(c_sock,fd)
+								
 							continue
 						#判断包头字段里填入的长度和实际收到的是否一致	
 						if len(data)!=length:
 							print(u'[ %s ] 客户端数据包长度异常' % time.strftime("%Y-%m-%d %X"))
-							err_msg=u'sys 数据包长度异常'
+							err_msg=u'echo 数据包长度异常'
 							message_queue[fd].put(err_msg)
 							continue
 
@@ -1184,25 +1090,46 @@ def start_server():
 									try:
 										epoll.modify(fd,select.EPOLLOUT)	
 									except:
-										close_clear_all(c_sock,fd)
+										epoll.modify(fd,0)
+										fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 									continue
 
 								#获取用户userid
 								userid=user_name_userid(user)
 
 								if userid < 0:
-									login_err_msg=u'sys 用户名不存在！'
+									login_err_msg=u'echo 用户名不存在！'
 									message_queue[fd].put(login_err_msg)
 									try:
 										epoll.modify(fd,select.EPOLLOUT)	
 									except:
-										close_clear_all(c_sock,fd)
+										epoll.modify(fd,0)
+										fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 									continue
 							
 								#进行认证
 								if user_auth(user,pwd):
-									#注销其他客户端的连接
-									single_login(user)
+									#注销同一账号其他客户端的连接,实现单点登录
+									try:
+										#获取用户id
+										userid=user_name_userid(user)	
+										#获取用户socket
+										user_conn=get_userid_conn(userid)
+										#对用户发送sock请求
+										logout_msg=u'echo 该账号在其他地方登录，您被迫已下线！'
+										message_queue[user_conn.fileno()].put(logout_msg)
+										try:
+											epoll.modify(user_conn.fileno(),select.EPOLLOUT)	
+											#清除认证用户列表
+											del_online_sock(user_conn)
+											#清除登录列表的记录
+											if user_conn.fileno() in auth_fd_to_socket.keys():
+												del auth_fd_to_socket[user_conn.fileno()]
+										except:
+											epoll.modify(user_conn.fileno(),0)
+											fd_to_socket[user_conn.fileno()].shutdown(socket.SHUT_RDWR)
+									except:
+										pass
 									#推送消息
 									push_new_msg(c_sock,user)
 									#添加到在线用户列表
@@ -1210,28 +1137,31 @@ def start_server():
 									#添加到在线fd2sock列表
 									auth_fd_to_socket[fd]=c_sock
 									#提示登录成功的信息
-									login_ok=u'sys 登录成功!'
+									login_ok=u'echo 登录成功!'
 									message_queue[fd].put(login_ok)
 									try:
 										print("[ %s ]开始修改epollout!" % time.ctime())
 										epoll.modify(fd,select.EPOLLOUT)	
 									except:
-										close_clear_all(c_sock,fd)
+										epoll.modify(fd,0)
+										fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 									continue
 								else:
-									login_fail=u'sys 登录失败，密码错误！'
+									login_fail=u'echo 登录失败，密码错误！'
 									message_queue[fd].put(login_fail)
 									try:
 										epoll.modify(fd,select.EPOLLOUT)	
 									except:
-										close_clear_all(c_sock,fd)
+										epoll.modify(fd,0)
+										fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 									continue
 							#跳转到EPOLLOUT
 							else:
 								try:
 									epoll.modify(fd,select.EPOLLOUT)	
 								except:
-									close_clear_all(c_sock,fd)
+									epoll.modify(fd,0)
+									fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 								continue
 
 					#如果已登录，则提取数据，放入到Quene中，跳转到EPOLLOUT
@@ -1242,7 +1172,7 @@ def start_server():
 							data=c_sock.recv(int(length))
 						except:
 							print(u'[ %s ] 获取客户端数据异常' % time.strftime("%Y-%m-%d %X"))
-							err_msg=u'sys 数据包异常'
+							err_msg=u'echo 数据包异常'
 							message_queue[fd].put(err_msg)
 							epoll.modify(fd,0)
 							fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
@@ -1250,12 +1180,13 @@ def start_server():
 						#判断包头字段里填入的长度和实际收到的是否一致	
 						if len(data)!=length:
 							print(u'[ %s ] 客户端数据包长度异常' % time.strftime("%Y-%m-%d %X"))
-							err_msg=u'sys 数据包异常'
+							err_msg=u'echo 数据包异常'
 							message_queue[fd].put(err_msg)
 							try:
 								epoll.modify(fd,select.EPOLLHUP)
 							except:
-								close_clear_all(c_sock,fd)
+								epoll.modify(fd,0)
+								fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 							continue
 						
 						#把数据存入队列
@@ -1263,7 +1194,8 @@ def start_server():
 						try:
 							epoll.modify(fd,select.EPOLLOUT)	
 						except:
-							close_clear_all(c_sock,fd)
+							epoll.modify(fd,0)
+							fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 						
 				#写事件
 				elif event & select.EPOLLOUT:	
@@ -1275,14 +1207,29 @@ def start_server():
 						#获取队列中的内容
 						try:
 							message=message_queue[fd].get_nowait()
-							send_msg(c_sock,message)
+							cmd=message.split(' ')[0]
+							print("命令####################",cmd)
+							#判断是否是服务器的信息
+							if cmd == 'echo':
+								echo_reply=message.split(' ')[1:]
+								send_msg(c_sock,' '.join(echo_reply))
+							elif cmd == 'help' or cmd == '?':
+								send_msg(c_sock,cmd_help)
+							elif cmd == 'close':
+								print(u'[ %s ] 客户端和服务器断开连接' % time.strftime("%Y-%m-%d %X"))
+								send_msg(c_sock,u'您已经与服务器断开连接')
+								#关闭连接
+								epoll.modify(fd,0)
+								fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
+								continue
 						except queue.Empty:
 							prompt_auth_msg=u'请输入用户名密码进行登录!\n命令格式:auth username password'
 							send_msg(c_sock,prompt_auth_msg)
 						try:
 							epoll.modify(fd,select.EPOLLIN)
 						except:
-							close_clear_all(c_sock,fd)
+							epoll.modify(fd,0)
+							fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 						continue
 					#如果已经登录则推送，获取队列中的内容，判断消息的类别，调用不同的函数处理
 					else:
@@ -1293,25 +1240,37 @@ def start_server():
 							try:
 								epoll.modify(fd,select.EPOLLIN)
 							except:
-								close_clear_all(c_sock,fd)
+								epoll.modify(fd,0)
+								fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 							continue
 						cmd=message.split(' ')[0]
 						#判断是否是服务器的信息
-						if cmd == 'sys':
-							sys_reply=message.split(' ')[1:]
-							send_msg(c_sock,' '.join(sys_reply))
+						#系统发出的消息
+						if cmd == 'echo':
+							echo_reply=message.split(' ')[1:]
+							send_msg(c_sock,' '.join(echo_reply))
+						elif cmd == 'help' or cmd == '?':
+							send_msg(c_sock,cmd_help)
 						elif cmd == 'close':
 							print(u'[ %s ] 客户端和服务器断开连接' % time.strftime("%Y-%m-%d %X"))
 							send_msg(c_sock,u'您已经与服务器断开连接')
 							#关闭连接
 							epoll.modify(fd,0)
-							auth_fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
+							fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 							continue
+						elif cmd == 'logout':
+							print(u'[ %s ] 您已退出系统' % time.strftime("%Y-%m-%d %X"))
+							send_msg(c_sock,u'您退出系统！')
+							#清除认证用户列表
+							del_online_sock(c_sock)
+							#清除登录列表的记录
+							if fd in auth_fd_to_socket.keys():
+								del auth_fd_to_socket[fd]
 						elif cmd == 'auth':
 							send_msg(c_sock,u'提示!您已认证！')
 						elif cmd not in noargs_cmd+args_cmd:
 							print(u'[ %s ] 客户端的命令不支持' % time.strftime("%Y-%m-%d %X"))
-							send_msg(c_sock,u'输入的命令服务器不支持')
+							send_msg(c_sock,u'输入的命令不支持')
 						else:
 							args=message.split(' ')[1:]
 							switch={
@@ -1348,7 +1307,8 @@ def start_server():
 						try:
 							epoll.modify(fd,select.EPOLLIN)
 						except:
-							close_clear_all(c_sock,fd)
+							epoll.modify(fd,0)
+							fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 				#关闭事件
 				elif event & select.EPOLLHUP:
 					print("进入到EPOLLHUP中")
