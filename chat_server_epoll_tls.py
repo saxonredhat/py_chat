@@ -29,6 +29,8 @@ db_config={
 r_redis=redis.Redis(host='localhost',port=6379,db=0)
 #redis键值模板
 KV_EXISTS_GROUPID=u'kv_exists_groupid:groupid:%s'
+KV_NOSPEAKING_GROUPID=u'kv_nospeaking_groupid:groupid:%s'
+KV_NOSPEAKING_USERID_IN_GROUPID=u'kv_nospeaking_userid_in_groupid:groupid:%s:userid:%s'
 KV_GROUPID_GET_GROUPNAME=u'kv_groupid_get_groupname:groupid:%s'
 KV_GROUPID_GET_OWN_USERID=u'kv_groupid_get_own_userid:groupid:%s'
 KV_USERID_IN_GROUPID=u'kv_userid_in_groupid:userid:%s:groupid:%s'
@@ -55,7 +57,7 @@ except:
 noargs_cmd=['listfriends','lf','listgroup','lg','listallgroup','lag','close','logout']
 
 #参数命令
-args_cmd=['msg','m','gmsg','gm','adduser','au','deluser','du','entergroup','eng','exitgroup','exg','kickout','ko','reject','rj','accept','ac','creategroup','cg','delgroup','dg','listgroupusers','lgu','auth','echo']
+args_cmd=['msg','m','gmsg','gm','adduser','au','deluser','du','entergroup','eng','exitgroup','exg','kickout','ko','reject','rj','accept','ac','creategroup','cg','delgroup','dg','listgroupusers','lgu','auth','echo','nospkuser','nsu','spkuser','su','nospkgroup','nsg','spkgroup','sg']
 
 #命令帮助
 cmd_help="""
@@ -64,12 +66,14 @@ cmd_help="""
 	|                命令使用说明:                  |
 	|                                               |
 	 ===============================================
-	|命令       参数1    参数2   (说明)             | 
+	|命令          参数1    参数2   (说明)          | 
 	 ===============================================
-	|auth       用户名   密码    (登录系统)         |
-	|msg/m      用户名   消息    (给用户发送消息)   |
-	|gmsg/gm    群ID     消息    (给群发送消息)     |
-	|kickout/ko 群ID     用户    (踢出群用户)       |
+	|auth          用户名   密码    (登录系统)      |
+	|msg/m         用户名   消息    (给用户发送消息)|
+	|gmsg/gm       群ID     消息    (给群发送消息)  |
+	|kickout/ko    群ID     用户    (移出群用户)    |
+	|nospkuser/nsu 群ID     用户    (禁言群用户)    |
+	|spkuser/su    群ID     用户    (取消禁言群用户)|
 	 ===============================================
 	|命令                参数    (说明)             |
 	 ===============================================
@@ -80,6 +84,8 @@ cmd_help="""
 	|delgroup/dg         群ID    (删群)             |
 	|entergroup/eng      群ID    (加群)             |
 	|exitgroup/exg       群ID    (退群)             |
+	|nospkgroup/nsg      群ID    (禁言群)           |
+	|spkgroup/sg         群ID    (取消禁言群)       |
 	|reject/rj           请求ID  (同意加好友|进群)  |
 	|accept/ac           请求ID  (拒绝加好友|进群)  |
 	|listgroupusers/lgu  群ID    (列出群成员信息)   |
@@ -421,6 +427,7 @@ def user_gmsg(conn,args):
 			return 
 		r_redis.set(r_key,"")
 
+	#获取群主ID
 	#读取redis	
 	r_key=KV_GROUPID_GET_OWN_USERID % groupid
 	if r_redis.exists(r_key) and r_redis.get(r_key):
@@ -453,6 +460,38 @@ def user_gmsg(conn,args):
 			send_msg(conn,"【系统提示】您非群[%s |ID:%s]成员，不能发送群信息！" % (group_name,groupid))
 			return
 		r_redis.set(r_key,"")
+
+	#判断是否是群主，非群主判断是否群禁言,判断是否用户被禁言
+	if req_userid != own_userid:
+		#是否群禁言
+		#读取redis
+		r_key=KV_NOSPEAKING_GROUPID % groupid
+		if r_redis.exists(r_key):
+			is_group_forbidden_speaking=r_redis.get(r_key).decode('utf-8')
+		else:
+			sql='select is_group_forbidden_speaking from `group` where id=%s' % groupid
+			res=sql_query(sql)
+			is_group_forbidden_speaking=res[0][0]
+			r_redis.set(r_key,is_group_forbidden_speaking)
+
+		if int(is_group_forbidden_speaking):
+			send_msg(conn,u'【系统提示】 群[ %s|ID:%s ]已被禁言！' % (group_name,groupid))
+			return 
+
+		#是否用户被禁言
+		#读取redis
+		r_key=KV_NOSPEAKING_USERID_IN_GROUPID % (groupid,req_userid)
+		if r_redis.exists(r_key):
+			is_forbidden_speaking=r_redis.get(r_key).decode('utf-8')
+		else:
+			sql='select is_forbidden_speaking from group_users where groupid=%s and userid=%s' % (groupid,req_userid)
+			res=sql_query(sql)
+			is_forbidden_speaking=res[0][0]
+			r_redis.set(r_key,is_forbidden_speaking)
+
+		if int(is_forbidden_speaking):
+			send_msg(conn,u'【系统提示】 您已被群[ %s|ID:%s ]的群主禁言！' % (group_name,groupid))
+			return 
 
 	#获取群用户，发送群消息
 	#清空列表
@@ -1014,9 +1053,13 @@ def user_kickout(conn,args):
 		send_msg(conn,"群ID号[%s]不存在！" % groupid)
 		return 
 	own_userid=res[0][0]
-	groupname=res[0][1]
-	#获取群主名
 	own_username=user_userid_name(own_userid)
+	groupname=res[0][1]
+
+	#判断是否为群主,非群主不能踢用户
+	if req_userid != own_userid:
+		send_msg(conn,u'【系统提示】 您不是群[ %s|ID:%s ]的群主，无权移出用户！' % (group_name,groupid))
+		return
 
 	#判断用户是否存在
 	sql='select id from user where username="%s"' % to_username
@@ -1031,11 +1074,6 @@ def user_kickout(conn,args):
 	res=sql_query(sql)
 	if not res:
 		send_msg(conn,u"用户[%s]不在群[ %s|ID: ]内！" % (to_username,groupname,groupid))
-		return
-
-	#判断是否为群主,非群主不能踢用户
-	if req_userid != own_userid:
-		send_msg(conn,u'【系统提示】 您不是群[ %s|ID:%s ]的群主，无权踢出用户！' % (group_name,groupid))
 		return
 
 	###开始清理redis###
@@ -1145,20 +1183,270 @@ def user_delgroup(conn,args):
 
 	send_msg(conn,'【系统提示】 群[%s |ID:%s]已解散！' % (group_name,groupid))
 
+def user_nospkuser(conn,args):
+	req_userid=get_conn_userid(conn)
+	args_list=args
+	if len(args_list)!=2:
+		send_msg(conn,u'禁言用户操作参数错误！')
+		return	
+	groupid=args_list[0]
+	to_username=args_list[1]
+	#判断群是否存在
+	sql='select own_userid,name from `group` where id=%s' % groupid 
+	res=sql_query(sql)
+	if not res:
+		send_msg(conn,"群ID号[%s]不存在！" % groupid)
+		return 
+	own_userid=res[0][0]
+	own_username=user_userid_name(own_userid)
+	groupname=res[0][1]
+
+	#判断是否为群主,非群主不能踢用户
+	if req_userid != own_userid:
+		send_msg(conn,u'【系统提示】 您不是群[ %s|ID:%s ]的群主，无权禁言用户！' % (groupname,groupid))
+		return
+
+	#判断用户是否存在
+	sql='select id from user where username="%s"' % to_username
+	res=sql_query(sql)
+	if not res:
+		send_msg(conn,u"用户[%s]不存在！" % to_username)
+		return
+	to_userid=res[0][0]
+
+	#判断当前用户是否在群内,并且是否禁用
+	sql='select id,is_forbidden_speaking from group_users where groupid=%s and userid=%s' % (groupid,to_userid)
+	res=sql_query(sql)
+	if not res:
+		send_msg(conn,u"用户[%s]不在群[ %s|ID: ]内！" % (to_username,groupname,groupid))
+		return
+	else:
+		is_forbidden_speaking=res[0][1]
+		if is_forbidden_speaking:
+			send_msg(conn,u"【系统提示】用户 [ %s ]在群[ %s|ID:%s ]内已被禁言，无需再次操作！" % (to_username,groupname,groupid))
+			return
+
+	###开始清理redis###
+	r_key=KV_NOSPEAKING_USERID_IN_GROUPID % (groupid,to_userid)
+	r_redis.delete(r_key)
+	###结束清理redis###
+
+	#提醒群用户
+	sql='select userid from group_users where groupid=%s' % groupid
+	res=sql_query(sql)
+	for r in res:
+		notice_userid=r[0]
+		#判断是否被踢用户
+		if notice_userid == to_userid:
+			notice_content='【系统提示】您已被群[ %s|ID:%s ]的群主[ %s ]禁言！' % (groupname,groupid,own_username)
+		else:
+			notice_content='【系统提示】用户[ %s ]已被群[ %s|ID:%s ]的群主[ %s ]禁言！' % (to_username,groupname,groupid,own_username)
+		#判断用户是否在线
+		if user_is_online(notice_userid):
+			notice_conn=get_userid_conn(notice_userid)
+			send_msg(notice_conn,notice_content)
+		else:
+			notice_sql='insert into user_notice(userid,content,status,created_at) values(%s,"%s",0,now())' % (notice_userid,notice_content)
+			sql_dml(notice_sql)
+
+	#禁言用户
+	sql='update group_users set is_forbidden_speaking=1 where groupid=%s and userid=%s' % (groupid,to_userid)
+	sql_dml(sql)
+
+def user_spkuser(conn,args):
+	req_userid=get_conn_userid(conn)
+	args_list=args
+	if len(args_list)!=2:
+		send_msg(conn,u'取消禁言用户操作参数错误！')
+		return	
+	groupid=args_list[0]
+	to_username=args_list[1]
+	#判断群是否存在
+	sql='select own_userid,name from `group` where id=%s' % groupid 
+	res=sql_query(sql)
+	if not res:
+		send_msg(conn,"群ID号[%s]不存在！" % groupid)
+		return 
+	own_userid=res[0][0]
+	own_username=user_userid_name(own_userid)
+	groupname=res[0][1]
+
+	#判断是否为群主,非群主不能操作
+	if req_userid != own_userid:
+		send_msg(conn,u'【系统提示】 您不是群[ %s|ID:%s ]的群主，无权取消禁言用户！' % (groupname,groupid))
+		return
+
+	#判断用户是否存在
+	sql='select id from user where username="%s"' % to_username
+	res=sql_query(sql)
+	if not res:
+		send_msg(conn,u"用户[%s]不存在！" % to_username)
+		return
+	to_userid=res[0][0]
+
+	#判断当前用户是否在群内,并且是否禁用
+	sql='select id,is_forbidden_speaking from group_users where groupid=%s and userid=%s' % (groupid,to_userid)
+	res=sql_query(sql)
+	if not res:
+		send_msg(conn,u"用户[%s]不在群[ %s|ID: ]内！" % (to_username,groupname,groupid))
+		return
+	else:
+		is_forbidden_speaking=res[0][1]
+		if not is_forbidden_speaking:
+			send_msg(conn,u"【系统提示】用户 [ %s ]在群[ %s|ID:%s ]内未被禁言，无需此操作！" % (to_username,groupname,groupid))
+			return
+
+	###开始清理redis###
+	r_key=KV_NOSPEAKING_USERID_IN_GROUPID % (groupid,to_userid)
+	r_redis.delete(r_key)
+	###结束清理redis###
+
+	#提醒群用户
+	sql='select userid from group_users where groupid=%s' % groupid
+	res=sql_query(sql)
+	for r in res:
+		notice_userid=r[0]
+		#判断是否被踢用户
+		if notice_userid == to_userid:
+			notice_content='【系统提示】您已被群[ %s|ID:%s ]的群主[ %s ]取消禁言！' % (groupname,groupid,own_username)
+		else:
+			notice_content='【系统提示】用户[ %s ]已被群[ %s|ID:%s ]的群主[ %s ]取消禁言！' % (to_username,groupname,groupid,own_username)
+		#判断用户是否在线
+		if user_is_online(notice_userid):
+			notice_conn=get_userid_conn(notice_userid)
+			send_msg(notice_conn,notice_content)
+		else:
+			notice_sql='insert into user_notice(userid,content,status,created_at) values(%s,"%s",0,now())' % (notice_userid,notice_content)
+			sql_dml(notice_sql)
+
+	#取消禁言用户
+	sql='update group_users set is_forbidden_speaking=0 where groupid=%s and userid=%s' % (groupid,to_userid)
+	sql_dml(sql)
+
+def user_nospkgroup(conn,args):
+	req_userid=get_conn_userid(conn)
+	args_list=args
+	if len(args_list)!=1:
+		send_msg(conn,u'禁言群操作参数错误！')
+		return	
+	groupid=args_list[0]
+
+	#判断群是否存在
+	sql='select own_userid,name,is_group_forbidden_speaking from `group` where id=%s' % groupid 
+	res=sql_query(sql)
+	if not res:
+		send_msg(conn,"群ID号[%s]不存在！" % groupid)
+		return 
+
+	own_userid=res[0][0]
+	own_username=user_userid_name(own_userid)
+	groupname=res[0][1]
+	is_group_forbidden_speaking=res[0][2]
+
+	#判断是否为群主,非群主不能操作
+	if req_userid != own_userid:
+		send_msg(conn,u'【系统提示】 您不是群[ %s|ID:%s ]的群主，无权禁言群！' % (groupname,groupid))
+		return
+
+	#判断当前群是否被禁言
+	if is_group_forbidden_speaking:
+		send_msg(conn,u"【系统提示】群[ %s|ID:%s ]内已被禁言，无需再次操作！" % (groupname,groupid))
+		return
+
+	###开始清理redis###
+	r_key=KV_NOSPEAKING_GROUPID % groupid
+	r_redis.delete(r_key)
+	###结束清理redis###
+
+	#提醒群用户
+	sql='select userid from group_users where groupid=%s' % groupid
+	res=sql_query(sql)
+	for r in res:
+		notice_userid=r[0]
+		notice_content='【系统提示】群[ %s|ID:%s ]已被群主[ %s ]禁言！' % (groupname,groupid,own_username)
+		#判断用户是否在线
+		if user_is_online(notice_userid):
+			notice_conn=get_userid_conn(notice_userid)
+			send_msg(notice_conn,notice_content)
+		else:
+			notice_sql='insert into user_notice(userid,content,status,created_at) values(%s,"%s",0,now())' % (notice_userid,notice_content)
+			sql_dml(notice_sql)
+
+	#群禁言
+	sql='update `group` set is_group_forbidden_speaking=1 where id=%s' % groupid
+	sql_dml(sql)
+
+def user_spkgroup(conn,args):
+	req_userid=get_conn_userid(conn)
+	args_list=args
+	if len(args_list)!=1:
+		send_msg(conn,u'取消禁言群操作参数错误！')
+		return	
+	groupid=args_list[0]
+
+	#判断群是否存在
+	sql='select own_userid,name,is_group_forbidden_speaking from `group` where id=%s' % groupid 
+	res=sql_query(sql)
+	if not res:
+		send_msg(conn,"群ID号[%s]不存在！" % groupid)
+		return 
+
+	own_userid=res[0][0]
+	own_username=user_userid_name(own_userid)
+	groupname=res[0][1]
+	is_group_forbidden_speaking=res[0][2]
+
+	#判断是否为群主,非群主不能操作
+	if req_userid != own_userid:
+		send_msg(conn,u'【系统提示】 您不是群[ %s|ID:%s ]的群主，无权取消群禁言！' % (groupname,groupid))
+		return
+
+	#判断当前群是否被禁言
+	if not is_group_forbidden_speaking:
+		send_msg(conn,u"【系统提示】群[ %s|ID:%s ]内未被禁言，无需此操作！" % (groupname,groupid))
+		return
+
+	###开始清理redis###
+	r_key=KV_NOSPEAKING_GROUPID % groupid
+	r_redis.delete(r_key)
+	###结束清理redis###
+
+	#提醒群用户
+	sql='select userid from group_users where groupid=%s' % groupid
+	res=sql_query(sql)
+	for r in res:
+		notice_userid=r[0]
+		notice_content='【系统提示】群[ %s|ID:%s ]已被群主[ %s ]取消禁言！' % (groupname,groupid,own_username)
+		#判断用户是否在线
+		if user_is_online(notice_userid):
+			notice_conn=get_userid_conn(notice_userid)
+			send_msg(notice_conn,notice_content)
+		else:
+			notice_sql='insert into user_notice(userid,content,status,created_at) values(%s,"%s",0,now())' % (notice_userid,notice_content)
+			sql_dml(notice_sql)
+
+	#取消群禁言
+	sql='update `group` set is_group_forbidden_speaking=0 where id=%s' % groupid
+	sql_dml(sql)
+
 def close_clear_all(conn,fd):
 	print("清理客户端中...")
-	epoll.unregister(fd)
-	#从命令统计列表删除
-	del fd_to_command_count[fd]
-	#从在线userid2sock删除
-	del_online_sock(conn)
-	#从queue队列中删除
-	del message_queue[fd]
-	#从在线fd2sock字典删除
-	if fd in auth_fd_to_socket.keys():
-		del auth_fd_to_socket[fd] 
-	fd_to_socket[fd].close()
-	del fd_to_socket[fd]
+	try:
+		epoll.unregister(fd)
+		#从命令统计列表删除
+		del fd_to_command_count[fd]
+		#从在线userid2sock删除
+		del_online_sock(conn)
+		#从queue队列中删除
+		del message_queue[fd]
+		#从在线fd2sock字典删除
+		if fd in auth_fd_to_socket.keys():
+			del auth_fd_to_socket[fd] 
+		fd_to_socket[fd].close()
+		del fd_to_socket[fd]
+	except:
+		print("清理客户端发生异常")	
+	print("清理客户端完成.")
 
 
 def handle_epollin(fd,c_sock):
@@ -1388,6 +1676,7 @@ def handle_epollout(fd,c_sock):
 			send_msg(c_sock,u'输入的命令不支持,请使用 help/?')
 		else:
 			args=message.split(' ')[1:]
+			#命令分发
 			switch={
 				'msg': user_msg,
 				'm': user_msg,
@@ -1419,7 +1708,15 @@ def handle_epollout(fd,c_sock):
 				'creategroup': user_creategroup,
 				'cg': user_creategroup,
 				'delgroup': user_delgroup,
-				'dg': user_delgroup
+				'dg': user_delgroup,
+				'nospkgroup': user_nospkgroup,
+				'nsg': user_nospkgroup,
+				'spkgroup': user_spkgroup,
+				'sg': user_spkgroup,
+				'nospkuser': user_nospkuser,
+				'nsu': user_nospkuser,
+				'spkuser': user_spkuser,
+				'su': user_spkuser
 			}
 			switch[cmd](c_sock,args)
 		try:
@@ -1447,21 +1744,30 @@ def load_data2redis():
 		r_key=LIST_USERIDS_OF_GROUPID % groupid
 		r_redis.ltrim(r_key,1,0)
 
-	sql='select userid,groupid from group_users'
+	sql='select userid,groupid,is_forbidden_speaking from group_users'
 	res=sql_query(sql)
 	for r in res:
 		userid=int(r[0])
-		groupid=r[0]	
+		groupid=r[1]	
+		is_forbidden_speaking=int(r[2])
 		r_key=LIST_USERIDS_OF_GROUPID % groupid
 		r_redis.rpush(r_key,userid)
 
-	#查询所有群ID，所有群成员ID列表
-	sql='select id from `group`'
+		r_key=KV_NOSPEAKING_USERID_IN_GROUPID % (groupid,userid)
+		r_redis.set(r_key,is_forbidden_speaking)
+
+	#查询所有群ID,是否禁用，所有群成员ID列表
+	sql='select id,is_group_forbidden_speaking from `group`'
 	res=sql_query(sql)
 	for r in res:
 		gid=r[0]
+		is_group_forbidden_speaking=int(r[1])
 		r_key=KV_EXISTS_GROUPID % gid
 		r_redis.set(r_key,"")
+		
+		r_key=KV_NOSPEAKING_GROUPID % gid
+		r_redis.set(r_key,is_group_forbidden_speaking)
+		
 		sql='select userid from group_users where groupid=%s' % gid
 		res2=sql_query(sql)
 		for r2 in res2:
