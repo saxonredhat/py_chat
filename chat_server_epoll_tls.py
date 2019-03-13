@@ -223,7 +223,7 @@ def user_auth(user,pwd):
 	if q_pwd != pwd:
 		print(u'[ %s ] 客户端认证用户%s密码错误！' % (time.strftime("%Y-%m-%d %X"),user))
 		return False
-	print("用户[%s]认证成功" % user)
+	print("用户[ %s ]认证成功" % user)
 	return True 
 
 def get_data(conn):
@@ -232,7 +232,7 @@ def get_data(conn):
 	data=conn.recv(int(length))
 	if len(data)!=length:
 		print(u'[ %s ] 客户端数据包异常！' % (time.strftime("%Y-%m-%d %X")))
-		data_err_msg=u'认证信息异常'
+		data_err_msg=u'【系统提示】认证信息异常'
 		send_msg(conn,data_err_msg)
 		return
 	return data
@@ -243,7 +243,7 @@ def user_conn_auth(conn,cli_ip,cli_port):
 	data=conn.recv(int(length))
 	if len(data)!=length:
 		print(u'[ %s ] 客户端(%s:%s)认证异常' % (time.strftime("%Y-%m-%d %X"),cli_ip,cli_port))
-		auth_err_msg=u'认证信息异常'
+		auth_err_msg=u'【系统提示】认证信息异常'
 		send_msg(conn,auth_err_msg)
 		return False
 	else:
@@ -251,7 +251,7 @@ def user_conn_auth(conn,cli_ip,cli_port):
 		cmd=data.decode('utf-8').split(' ')[0]
 		if cmd != 'auth':
 			print(u'[ %s ] 客户端(%s:%s)认证命令格式错误:%s' % (time.strftime("%Y-%m-%d %X"),cli_ip,cli_port,cmd))
-			auth_format_err_msg=u'认证命令格式错误！\n认证命令:auth username password'
+			auth_format_err_msg=u'【系统提示】认证命令格式错误！\n认证命令:auth username password'
 			send_msg(conn,auth_format_err_msg)	
 			return False
 		else:
@@ -261,12 +261,12 @@ def user_conn_auth(conn,cli_ip,cli_port):
 			res=sql_query(sql)
 			if not res:
 				print(u'[ %s ] 客户端认证用户名%s不存在！' % (time.strftime("%Y-%m-%d %X"),user))
-				auth_user_not_exist_err_msg=u'客户端认证用户名不存在!'
+				auth_user_not_exist_err_msg=u'【系统提示】客户端认证用户名不存在!'
 				send_msg(conn,auth_user_not_exist_err_msg)
 				return False
 			if res[0][2]!=pwd:
 				print(u'[ %s ] 客户端(%s:%s)认证用户%s密码错误！' % (time.strftime("%Y-%m-%d %X"),user))
-				auth_pwd_err_msg=u'用户名或者密码错误!'
+				auth_pwd_err_msg=u'【系统提示】用户名或者密码错误!'
 				send_msg(conn,auth_pwd_err_msg)
 				return False
 			return True
@@ -285,22 +285,26 @@ def push_new_msg(conn,user_id):
 		#判断是否需要推送给当前用户
 		r_key=LIST_GROUPMESSAGES_OF_USERID_IN_GROUPID % (groupid,user_id)
 		l_len=r_redis.llen(r_key)
-		if l_len:
-			#获取该消息列表
-			send_msg(conn,u'您新收到了[%s]条群消息！' % l_len)
-			for seq in range(0,l_len):
-				gmsg=r_redis.lpop(r_key).decode('utf-8')
-				send_msg(conn,gmsg)
+		for seq in range(0,l_len):
+			gmsg=r_redis.lpop(r_key).decode('utf-8')
+			send_msg(conn,gmsg)
 				
 	#是否收到用户消息
 	#查询redis数据库是否有该用户的数据
 	r_key=LIST_USERMESSAGES_OF_USERID % user_id
 	msg_count=r_redis.llen(r_key)
-	print("msg_count:",msg_count)
-	if msg_count:
-		for i in range(0,msg_count):	
-			msg=r_redis.lpop(r_key).decode('utf-8')
-			send_msg(conn,msg)
+	for i in range(0,msg_count):	
+		msg=r_redis.lpop(r_key).decode('utf-8')
+		send_msg(conn,msg)
+
+	#是否收到提醒消息
+	sql='select id,content from user_notice where status=0 and userid=%s' % user_id  
+	res=sql_query(sql)
+	if res:
+		for r in res:
+			send_msg(conn,r[1])
+			sql='update user_notice set status=1 where id=%s' % r[0]
+			sql_dml(sql)
 	
 	#是否收到加好友消息
 	sql='select id,userid from user_req where add_userid=%s and status=0' % user_id 
@@ -310,7 +314,7 @@ def push_new_msg(conn,user_id):
 			req_id=r[0]
 			req_userid=r[1]
 			req_username=user_userid_name(req_userid)
-			send_msg(conn,u"用户%s向您申请添加好友请求!\n请求号为%s\n同意：accept %s \n拒绝：reject %s" % (req_username,req_id,req_id,req_id))
+			send_msg(conn,u"[ %s ]\n【系统消息】用户%s向您申请添加好友请求!\n请求号为%s\n同意：accept %s \n拒绝：reject %s" % (time.strftime("%Y-%m-%d %X"),req_username,req_id,req_id,req_id))
 
 	#是否收到加群消息
 	sql='select ur.id,ur.userid,g.id,g.name from user_req ur join `group` g on g.id=ur.add_groupid where g.own_userid=%s and ur.status=0' % user_id
@@ -322,16 +326,7 @@ def push_new_msg(conn,user_id):
 			req_username=user_userid_name(req_userid)
 			groupid=r[2]
 			group_name=r[3]
-			send_msg(conn,u'用户[%s]申请加入群[%s | ID:%s]\n申请号:%s\n同意：accept %s \n拒绝：reject %s' % (req_username,group_name,groupid,req_id,req_id,req_id))
-	
-	#是否收到提醒消息
-	sql='select id,content from user_notice where status=0 and userid=%s' % user_id  
-	res=sql_query(sql)
-	if res:
-		for r in res:
-			send_msg(conn,r[1])
-			sql='update user_notice set status=1 where id=%s' % r[0]
-			sql_dml(sql)
+			send_msg(conn,u'[ %s ]\n【系统消息】用户[ %s ]申请加入群[ %s|ID:%s ]\n申请号:%s\n同意：accept %s \n拒绝：reject %s' % (time.strftime("%Y-%m-%d %X"),req_username,group_name,groupid,req_id,req_id,req_id))
 
 def user_msg(conn,args):
 	from_userid=get_conn_userid(conn)
@@ -344,8 +339,8 @@ def user_msg(conn,args):
 		sql='select username from user where id=%s' % from_userid 
 		res=sql_query(sql)
 		if not res:
-			print(u'[ %s ] 用户id[%s]在系统中不存在' % (time.strftime("%Y-%m-%d %X"),from_userid))	
-			send_msg(conn,u'【系统提示】 用户id[%s]在系统中不存在' % from_userid)
+			print(u'[ %s ] 用户id[ %s ]在系统中不存在' % (time.strftime("%Y-%m-%d %X"),from_userid))	
+			send_msg(conn,u'【系统消息】 用户id[ %s ]在系统中不存在' % from_userid)
 			return
 		from_username=res[0][0]
 		#把结果写入redis
@@ -363,7 +358,7 @@ def user_msg(conn,args):
 		res=sql_query(sql)
 		if not res:
 			print(u'[ %s ] 用户%s在系统中不存在' % (time.strftime("%Y-%m-%d %X"),to_username))	
-			send_msg(conn,u'【系统提示】 用户%s在系统中不存在' % to_username)
+			send_msg(conn,u'【系统消息】 用户%s在系统中不存在' % to_username)
 			return	
 		to_userid=res[0][0]
 		#把结果写入redis
@@ -372,7 +367,7 @@ def user_msg(conn,args):
 	#判断是否为自己发送给自己
 	print("from_userid,to_userid",type(from_userid),type(to_userid))
 	if from_userid == int(to_userid):
-		user_msg=u'%s\n[ %s ]: %s' % (time.strftime("%Y-%m-%d %X"),from_username,content)
+		user_msg=u'[ %s ]\n【好友消息】[ %s ]: %s' % (time.strftime("%Y-%m-%d %X"),from_username,content)
 		send_msg(conn,user_msg)
 		return
 	#判断当前发送消息的接收方是否为好友，如果不是拒绝发送消息
@@ -383,7 +378,7 @@ def user_msg(conn,args):
 		sql='select userid from user_users where userid=%s and friend_userid=%s' % (from_userid,to_userid)
 		res=sql_query(sql)
 		if not res:
-			send_msg(conn,u'【系统提示】 该用户还不是您的好友！不能发送消息')
+			send_msg(conn,u'【系统消息】 该用户还不是您的好友！不能发送消息')
 			return 
 		 #把结果写入redis
 		r_redis.set(r_key,"")
@@ -411,7 +406,7 @@ def user_gmsg(conn,args):
 	req_username=user_userid_name(req_userid)
 	args_list=args
 	if len(args_list)<2:
-		send_msg(conn,u'发群消息的操作参数错误')
+		send_msg(conn,u'【系统提示】发群消息的操作参数错误')
 		return	
 	groupid=args_list[0]
 	content=' '.join(args_list[1:])
@@ -423,7 +418,7 @@ def user_gmsg(conn,args):
 		sql='select id,own_userid,name from `group` where id=%s' % groupid 
 		res=sql_query(sql)
 		if not res:
-			send_msg(conn,"该群ID号[%s]不存在！" % groupid)
+			send_msg(conn,"【系统提示】该群ID号[ %s ]不存在！" % groupid)
 			return 
 		r_redis.set(r_key,"")
 
@@ -457,7 +452,7 @@ def user_gmsg(conn,args):
 		sql='select id from group_users where groupid=%s and userid=%s' % (groupid,req_userid)
 		res=sql_query(sql)
 		if not res:
-			send_msg(conn,"【系统提示】您非群[%s |ID:%s]成员，不能发送群信息！" % (group_name,groupid))
+			send_msg(conn,"【系统提示】您非群[ %s|ID:%s ]成员，不能发送群信息！" % (group_name,groupid))
 			return
 		r_redis.set(r_key,"")
 
@@ -475,7 +470,7 @@ def user_gmsg(conn,args):
 			r_redis.set(r_key,is_group_forbidden_speaking)
 
 		if int(is_group_forbidden_speaking):
-			send_msg(conn,u'【系统提示】 群[ %s|ID:%s ]已被禁言！' % (group_name,groupid))
+			send_msg(conn,u'[ %s ]\n【系统消息】 群[ %s|ID:%s ]已被禁言！' % (time.strftime("%Y-%m-%d %X"),group_name,groupid))
 			return 
 
 		#是否用户被禁言
@@ -490,13 +485,13 @@ def user_gmsg(conn,args):
 			r_redis.set(r_key,is_forbidden_speaking)
 
 		if int(is_forbidden_speaking):
-			send_msg(conn,u'【系统提示】 您已被群[ %s|ID:%s ]的群主禁言！' % (group_name,groupid))
+			send_msg(conn,u'[ %s ]\n【系统消息】 您已被群[ %s|ID:%s ]的群主禁言！' % (time.strftime("%Y-%m-%d %X"),group_name,groupid))
 			return 
 
 	#获取群用户，发送群消息
 	#清空列表
 	send_time=time.strftime("%Y-%m-%d %X")
-	gmsg_content='%s\n【群消息】【%s|ID:%s】【%s】:%s' % (send_time,group_name,groupid,req_username,content)
+	gmsg_content='[ %s ]\n【群消息】[ %s|ID:%s ][ %s ]:%s' % (send_time,group_name,groupid,req_username,content)
 	userid_list=[]
 	r_key=LIST_USERIDS_OF_GROUPID % groupid
 	if r_redis.llen(r_key):
@@ -514,7 +509,7 @@ def user_gmsg(conn,args):
 	for to_userid in userid_list:
 		#判断是否是本人发送
 		if to_userid == req_userid:
-			send_msg(conn,u'[ %s ]\n【发送消息】->【%s|ID:%s】(群):%s' % (send_time,group_name,groupid,content))
+			send_msg(conn,u'[ %s ]\n【发送群消息】[ %s|ID:%s ]:%s' % (send_time,group_name,groupid,content))
 			continue
 			
 		#判断用户是否在线
@@ -530,32 +525,32 @@ def user_adduser(conn,args):
 	req_username=user_userid_name(userid)
 	args_list=args
 	if len(args_list)!=1:
-		send_msg(conn,u'添加好友的命令错误')
+		send_msg(conn,u'【系统提示】添加好友的命令错误')
 		return
 	to_username=args_list[0]
 	#判断用户是否存在
 	sql='select id from user where username="%s"' % to_username
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,u"系统不存在用户%s" % to_username)
+		send_msg(conn,u"【系统提示】系统不存在用户%s" % to_username)
 		return
 	add_userid=res[0][0]
 
 	#判断是否添加的是自己
 	if userid == add_userid:
-		send_msg(conn,u"不能添加自己为好友！")
+		send_msg(conn,u"【系统提示】不能添加自己为好友！")
 		return 1 
 
 	#判断是否已经添加为好友,或者是否已经存在申请请求
 	sql='select id from user_users where userid=%s and friend_userid=%s' % (userid,add_userid)
 	res=sql_query(sql)
 	if res:
-		send_msg(conn,u"您和用户%s已经是好友关系，不需要再次添加" % to_username)
+		send_msg(conn,u"【系统提示】您和用户%s已经是好友关系，不需要再次添加" % to_username)
 		return
 	sql='select id from user_req where userid=%s and add_userid=%s and type=1 and status=0' % (userid,add_userid)
 	res=sql_query(sql)
 	if res:
-		send_msg(conn,u"您已经向%s发送过好友申请，无需再次发送" % to_username)
+		send_msg(conn,u"【系统提示】您已经向%s发送过好友申请，无需再次发送" % to_username)
 		return
 	
 	
@@ -568,28 +563,28 @@ def user_adduser(conn,args):
 		if not res:
 			return
 		req_id=res[0][0]
-		send_msg(to_conn,u"用户%s向您申请添加好友请求!\n请求号为%s\n同意：accept %s \n拒绝：reject %s" % (req_username,req_id,req_id,req_id))
-	send_msg(conn,u'已向该用户%s发送添加好友请求' % to_username)
+		send_msg(to_conn,u"[ %s ]【系统消息】用户%s向您申请添加好友请求!\n同意：\naccept %s \n拒绝：\nreject %s" % (time.strftime("%Y-%m-%d %X"),req_username,req_id,req_id,req_id))
+	send_msg(conn,u'[ %s ]【系统消息】已向该用户%s发送添加好友申请' % (time.strftime("%Y-%m-%d %X"),to_username))
 
 def user_deluser(conn,args):
 	userid=get_conn_userid(conn)	
 	req_username=user_userid_name(userid)
 	args_list=args
 	if len(args_list)!=1:
-		send_msg(conn,u'删除好友的命令错误')
+		send_msg(conn,u'【系统提示】删除好友的命令错误')
 		return
 	to_username=args_list[0]
 	sql='select id from user where username="%s"' % to_username
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,u"系统不存在用户[%s]" % to_username)
+		send_msg(conn,u"【系统提示】系统不存在用户[ %s ]" % to_username)
 		return
 	del_userid=res[0][0]
 	#判断是否已经是好友
 	sql='select id from user_users where userid=%s and friend_userid=%s' % (userid,del_userid)
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,u"您和用户[%s]不是好友关系" % to_username)
+		send_msg(conn,u"【系统提示】您和用户[ %s ]不是好友关系" % to_username)
 		return
 
 	###开始清除redis###
@@ -607,12 +602,12 @@ def user_deluser(conn,args):
 	sql_dml(sql)
 	sql='delete from user_users where userid=%s and friend_userid=%s' % (del_userid,userid) 
 	sql_dml(sql)
-	send_msg(conn,u"您和用户[%s]已经解除好友关系" % to_username)
+	send_msg(conn,u"[ %s ]【系统消息】您和用户[ %s ]已经解除好友关系" % (time.strftime("%Y-%m-%d %X"),to_username))
 	
 	
 	#通知对方
 	to_conn=get_userid_conn(del_userid)
-	notice_content='用户[%s]已和你您解除好友关系' % req_username
+	notice_content='[ %s ]【系统消息】用户[ %s ]已和你您解除好友关系' % (time.strftime("%Y-%m-%d %X"),req_username)
 	if to_conn:
 		send_msg(to_conn,notice_content)
 	else:
@@ -625,7 +620,7 @@ def user_entergroup(conn,args):
 	#判断参数是否正确
 	args_list=args
 	if len(args_list)!=1:
-		send_msg(conn,u'加群的操作参数错误')
+		send_msg(conn,u'【系统提示】加群的操作参数错误')
 		return
 
 	groupid=args_list[0]
@@ -633,7 +628,7 @@ def user_entergroup(conn,args):
 	sql='select id,own_userid,name from `group` where id=%s' % groupid 
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,"该群ID号[%s]不存在！" % groupid)
+		send_msg(conn,"【系统提示】该群ID号[ %s ]不存在！" % groupid)
 		return 
 	own_userid=res[0][1]
 	group_name=res[0][2]
@@ -642,14 +637,14 @@ def user_entergroup(conn,args):
 	sql='select g.id,g.name from `group` g left join group_users gu on gu.groupid=g.id where g.id=%s and (g.own_userid=%s or gu.userid=%s)' % (groupid,req_userid,req_userid)
 	res=sql_query(sql)
 	if res:
-		send_msg(conn,u'您已经在群[%s | ID:%s]中,无需加入！'% (res[0][1],res[0][0]))
+		send_msg(conn,u'【系统提示】您已经在群[ %s|ID:%s ]中,无需加入！'% (res[0][1],res[0][0]))
 		return
 
 	#判断是否已经存在加入该群的申请请求
 	sql='select ur.id,g.id,g.name from user_req ur left join `group` g on ur.add_groupid=g.id where ur.userid=%s and ur.add_groupid=%s and ur.status=0' % (req_userid,groupid)
 	res=sql_query(sql)
 	if res:
-		send_msg(conn,u'您已经申请过加入群[%s | ID:%s]，请等待回复！'% (res[0][2],res[0][1]))
+		send_msg(conn,u'【系统提示】您已经申请过加入群[ %s|ID:%s ]，请等待回复！'% (res[0][2],res[0][1]))
 		return
 	
 	#添加加群请求
@@ -657,7 +652,7 @@ def user_entergroup(conn,args):
 	sql_dml(sql)
 	req_username=user_userid_name(req_userid)
 
-	send_msg(conn,u'您申请了加入群[%s | ID:%s]，请等待回复！'% (group_name,groupid))
+	send_msg(conn,u'【系统消息】您申请了加入群[ %s|ID:%s ]，请等待回复！'% (group_name,groupid))
 	
 	sql='select id from user_req where userid=%s and add_groupid=%s and status=0 LIMIT 1' % (req_userid,groupid)
 	res=sql_query(sql)
@@ -667,7 +662,7 @@ def user_entergroup(conn,args):
 	#判断群主是否在在线，在线直接发送加群提醒，如果不在线，群主通过user_req可以看到加群消息	
 	if user_is_online(own_userid):
 		own_conn=get_userid_conn(own_userid)
-		send_msg(own_conn,u'用户[%s]申请加入群%s群[ID号:%s]\n申请号:%s\n同意：accept %s \n拒绝：reject %s' % (req_username,group_name,groupid,req_id,req_id,req_id))
+		send_msg(own_conn,u'[ %s ]【系统消息】用户[ %s ]申请加入群[ %s|ID:%s ]\n同意：\naccept %s \n拒绝：\nreject %s' % (time.strftime("%Y-%m-%d %X"),req_username,group_name,groupid,req_id,req_id,req_id))
 
 
 
@@ -677,7 +672,7 @@ def user_exitgroup(conn,args):
 	#判断参数是否正确
 	args_list=args
 	if len(args_list)!=1:
-		send_msg(conn,u'退群的操作参数错误')
+		send_msg(conn,u'【系统提示】退群的操作参数错误')
 		return
 
 	groupid=args_list[0]
@@ -685,7 +680,7 @@ def user_exitgroup(conn,args):
 	sql='select id,own_userid,name from `group` where id=%s' % groupid 
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,"该群ID号[%s]不存在！" % groupid)
+		send_msg(conn,"【系统提示】该群ID号[ %s ]不存在！" % groupid)
 		return 
 	own_userid=res[0][1]
 	group_name=res[0][2]
@@ -694,12 +689,12 @@ def user_exitgroup(conn,args):
 	sql='select g.id,g.name from `group` g left join group_users gu on gu.groupid=g.id where g.id=%s and (g.own_userid=%s or gu.userid=%s)' % (groupid,req_userid,req_userid)
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,u'您不在群[%s | ID:%s]中,无需退出！'% (res[0][1],res[0][0]))
+		send_msg(conn,u'【系统提示】您不在群[ %s|ID:%s ]中,无需退出！'% (res[0][1],res[0][0]))
 		return
 
 	#判断是否为群主,群主无法退群
 	if req_userid == own_userid:
-		send_msg(conn,u'您是群[%s |ID:%s]的群主，无法退群！' % (group_name,groupid))
+		send_msg(conn,u'【系统提示】您是群[ %s|ID:%s ]的群主，无法退群！' % (group_name,groupid))
 		return
 
 	###开始清除redis###
@@ -715,10 +710,10 @@ def user_exitgroup(conn,args):
 	#退群请求
 	sql='delete from group_users where userid=%s and groupid=%s' % (req_userid,groupid)
 	sql_dml(sql)
-	send_msg(conn,u'您已退出群[%s |ID:%s]！' % (group_name,groupid))
+	send_msg(conn,u'【系统消息】您已退出群[ %s|ID:%s ]！' % (group_name,groupid))
 
 	#判断群主是否在在线，在线直接发送退群提醒，如果不在线，把退群消息加入到user_notice	
-	notice_content=u'用户[%s]退出群[%s |ID号:%s]' % (req_username,group_name,groupid)
+	notice_content=u'[ %s ]\n【系统消息】用户[ %s ]退出群[ %s |ID号:%s] ' % (time.strftime("%Y-%m-%d %X"),req_username,group_name,groupid)
 	if user_is_online(own_userid):
 		own_conn=get_userid_conn(own_userid)
 		send_msg(own_conn,notice_content)
@@ -731,13 +726,13 @@ def user_accept(conn,args):
 	cur_userid=get_conn_userid(conn)
 	args_list=args
 	if len(args_list)!=1:
-		send_msg(conn,u'同意请求的操作参数错误')
+		send_msg(conn,u'【系统提示】同意请求的操作参数错误')
 		return	
 	req_id=args_list[0]
 	sql='select id,userid,add_userid,add_groupid from user_req where id=%s and status=0' % req_id
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,u'请求的ID号不存在')
+		send_msg(conn,u'【系统提示】请求的ID号不存在')
 		return
 	req_userid=res[0][1]
 	add_userid=res[0][2]
@@ -747,7 +742,7 @@ def user_accept(conn,args):
 	if add_userid:
 		#判断当前用户是否有权限执行
 		if cur_userid != add_userid:
-			send_msg(conn,u'您无权执行该操作！')
+			send_msg(conn,u'【系统提示】您无权执行该操作！')
 			return 1
 			
 		#互加好友操作
@@ -757,8 +752,8 @@ def user_accept(conn,args):
 		sql_dml(sql)
 
 		#消息提醒内容
-		notice_content=u'用户%s已经同意添加您为好友!' % user_userid_name(add_userid)
-		send_msg(conn,u'您已同意添加%s为好友' % user_userid_name(add_userid))
+		notice_content=u'[ %s ]\n【系统消息】用户%s已经同意添加您为好友!' % (time.strftime("%Y-%m-%d %X"),user_userid_name(add_userid))
+		send_msg(conn,u'[ %s ]\n【系统消息】您已同意添加%s为好友' % user_userid_name(add_userid))
 
 	#加群
 	if add_groupid:
@@ -766,11 +761,11 @@ def user_accept(conn,args):
 		sql='select own_userid from `group` where id=%s' % add_groupid
 		res=sql_query(sql)
 		if not res:
-			send_msg(conn,u'遇到UF0！')
+			send_msg(conn,u'【系统提示】遇到UF0！')
 			return
 		own_userid=res[0][0]
 		if cur_userid != own_userid:
-			send_msg(conn,u'您非该群的群主，无权执行该操作！')
+			send_msg(conn,u'【系统提示】您非该群的群主，无权执行该操作！')
 			return 2 
 		
 		#把用户加入群
@@ -786,8 +781,8 @@ def user_accept(conn,args):
 			group_name=res[0][1]
 			group_own_userid=res[0][2]	
 			#消息提醒内容
-			notice_content=u"[群主:%s]已经同意你加入群[%s | ID:%s]！" % (user_userid_name(group_own_userid),group_name,groupid)
-			send_msg(conn,u'您已同意用户[%s]加入群[%s | ID:%s]！' %(user_userid_name(req_userid),group_name,groupid) )
+			notice_content=u"[ %s ]\n【系统消息】[群主:%s]已经同意你加入群[ %s|ID:%s ]！" % (time.strftime("%Y-%m-%d %X"),user_userid_name(group_own_userid),group_name,groupid)
+			send_msg(conn,u'[ %s ]\n【系统消息】您已同意用户[ %s ]加入群[ %s|ID:%s ]！' %(user_userid_name(req_userid),group_name,groupid) )
 
 	#判断该请求的用户是否在线，如果在线直接提醒用户，不在线插入提醒信息到数据库
 	if user_is_online(req_userid):
@@ -805,13 +800,13 @@ def user_reject(conn,args):
 	cur_userid=get_conn_userid(conn)
 	args_list=args
 	if len(args_list)!=1:
-		send_msg(conn,u'拒绝请求的操作参数错误')
+		send_msg(conn,u'【系统提示】拒绝请求的操作参数错误')
 		return	
 	req_id=args_list[0]
 	sql='select id,userid,add_userid,add_groupid from user_req where id=%s and status=0' % req_id
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,u'请求的ID号不存在')
+		send_msg(conn,u'【系统提示】请求的ID号不存在')
 		return
 	req_userid=res[0][1]
 	add_userid=res[0][2]
@@ -821,10 +816,10 @@ def user_reject(conn,args):
 	if add_userid:
 		#判断当前用户是否有权限执行
 		if cur_userid != add_userid:
-			send_msg(conn,u'您无权执行该操作！')
+			send_msg(conn,u'【系统提示】您无权执行该操作！')
 			return 1
-		notice_content=u'用户%s已经婉拒了您添加好友的请求！' % user_userid_name(add_userid)
-		send_msg(conn,u'您已拒绝用户%s的添加好友申请' % user_userid_name(add_userid))
+		notice_content=u'[ %s ]\n【系统消息】用户%s已经婉拒了您添加好友的请求！' % (time.strftime("%Y-%m-%d %X"),user_userid_name(add_userid))
+		send_msg(conn,u'[ %s ]\n【系统消息】您已拒绝用户%s的添加好友申请' % user_userid_name(add_userid))
 
 	#如果是添加群
 	if add_groupid:
@@ -832,11 +827,11 @@ def user_reject(conn,args):
 		sql='select own_userid from `group` where id=%s' % add_groupid
 		res=sql_query(sql)
 		if not res:
-			send_msg(conn,u'遇到UF0！')
+			send_msg(conn,u'【系统提示】遇到UF0！')
 			return
 		own_userid=res[0][0]
 		if cur_userid != own_userid:
-			send_msg(conn,u'您非该群的群主，无权执行该操作！')
+			send_msg(conn,u'【系统提示】您非该群的群主，无权执行该操作！')
 			return 2 
 		#获取群的信息
 		sql='select id,name,own_userid from `group` where id=%s' % add_groupid
@@ -845,8 +840,8 @@ def user_reject(conn,args):
 			groupid=res[0][0]
 			group_name=res[0][1]
 			group_own_userid=res[0][2]	
-			notice_content=u"[群主:%s]已经拒绝你加入群[%s | ID:%s]的请求！" % (user_userid_name(group_own_userid),group_name,groupid)
-			send_msg(conn,u'您已拒绝用户[%s]加入群[%s | ID:%s]的请求！' %(user_userid_name(req_userid),group_name,groupid) )
+			notice_content=u"[ %s ]\n【系统消息】[群主:%s]已经拒绝你加入群[ %s|ID:%s ]的请求！" % (time.strftime("%Y-%m-%d %X"),user_userid_name(group_own_userid),group_name,groupid)
+			send_msg(conn,u'[ %s ]【系统提示】您已拒绝用户[ %s ]加入群[ %s|ID:%s ]的请求！' % (time.strftime("%Y-%m-%d %X"),user_userid_name(req_userid),group_name,groupid) )
 
 	#判断用户是否在线，如果在线直接提醒用户，不在线插入提醒信息到数据库
 	if user_is_online(req_userid):
@@ -887,7 +882,7 @@ def user_listgroup(conn,args):
 	own_userid=get_conn_userid(conn)
 	args_list=args
 	if len(args_list)!=0:
-		send_msg(conn,u'查看群的操作参数错误')
+		send_msg(conn,u'【系统提示】查看群的操作参数错误')
 		return	
 	#查看当前用户拥有的群
 	own_groups=[]
@@ -914,7 +909,7 @@ def user_listallgroup(conn,args):
 	own_userid=get_conn_userid(conn)
 	args_list=args
 	if len(args_list)!=0:
-		send_msg(conn,u'查看群的操作参数错误')
+		send_msg(conn,u'【系统提示】查看群的操作参数错误')
 		return	
 	#查看当前用户拥有的群
 	groups=[]
@@ -946,7 +941,7 @@ def user_listgroupusers(conn,args):
 	req_userid=get_conn_userid(conn)
 	args_list=args
 	if len(args_list)!=1:
-		send_msg(conn,u'列出群成员的操作参数错误')
+		send_msg(conn,u'【系统提示】列出群成员的操作参数错误')
 		return	
 	groupid=args_list[0]
 
@@ -954,7 +949,7 @@ def user_listgroupusers(conn,args):
 	sql='select id,own_userid,name from `group` where id=%s' % groupid 
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,"该群ID号[%s]不存在！" % groupid)
+		send_msg(conn,"【系统提醒】该群ID号[ %s ]不存在！" % groupid)
 		return 
 	own_userid=res[0][1]
 	group_name=res[0][2]
@@ -963,7 +958,7 @@ def user_listgroupusers(conn,args):
 	sql='select id from group_users where groupid=%s and userid=%s' % (groupid,req_userid)
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,"您非群[%s |ID:%s]成员，不能查看群成员信息！" % (group_name,groupid))
+		send_msg(conn,"【系统提示】您非群[ %s|ID:%s ]成员，不能查看群成员信息！" % (group_name,groupid))
 		return
 	#查看群成员信息
 	sql='select userid from group_users where groupid=%s' % groupid
@@ -987,14 +982,14 @@ def user_listgroupusers(conn,args):
 			else:
 				mem_info+='(离线)'
 			mem_list.append(mem_info)
-		send_msg(conn,'群[%s |ID:%s]成员信息\n%s' %(group_name,groupid,'\n'.join(mem_list)))
+		send_msg(conn,'群[ %s|ID:%s ]成员信息\n%s' %(group_name,groupid,'\n'.join(mem_list)))
 		
 
 def user_creategroup(conn,args):
 	own_userid=get_conn_userid(conn)
 	args_list=args
 	if len(args_list)!=1:
-		send_msg(conn,u'创建群的操作参数错误')
+		send_msg(conn,u'【系统提示】创建群的操作参数错误')
 		return	
 	group_name=args_list[0]
 
@@ -1002,20 +997,20 @@ def user_creategroup(conn,args):
 	sql='select groups_limit from user where id=%s' % own_userid
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,u'查看数据库异常')
+		send_msg(conn,u'【系统提示】查看数据库异常')
 		return 
 	groups_limit=res[0][0]
 	if groups_limit == 0:
-		send_msg(conn,u'您创建的群数量已达上限数为%s' % groups_limit)
+		send_msg(conn,u'【系统提示】您创建的群数量已达上限数为%s' % groups_limit)
 		return
 	sql='select count(1) from `group` where own_userid=%s' % own_userid
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,u'查看数据库异常')
+		send_msg(conn,u'【系统提示】查看数据库异常')
 		return
 	group_count=res[0][0]
 	if group_count+1>groups_limit:
-		send_msg(conn,u'您创建的群数量已达上限数为%s,当前拥有群数为%s' % (groups_limit,group_count))
+		send_msg(conn,u'【系统提示】您创建的群数量已达上限数为%s,当前拥有群数为%s' % (groups_limit,group_count))
 		return
 
 	#建群
@@ -1036,13 +1031,13 @@ def user_creategroup(conn,args):
 		sql='update `group` set is_empty=1 where id=%s' % groupid
 		sql_dml(sql)
 	
-	send_msg(conn,u'群[%s]已经创建完成！' % group_name)
+	send_msg(conn,u'[ %s ]【系统消息】群[ %s ]已经创建完成！' % (time.strftime("%Y-%m-%d %X"),group_name))
 
 def user_kickout(conn,args):
 	req_userid=get_conn_userid(conn)
 	args_list=args
 	if len(args_list)!=2:
-		send_msg(conn,u'操作参数错误')
+		send_msg(conn,u'【系统提示】操作参数错误')
 		return	
 	groupid=args_list[0]
 	to_username=args_list[1]
@@ -1050,7 +1045,7 @@ def user_kickout(conn,args):
 	sql='select own_userid,name from `group` where id=%s' % groupid 
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,"群ID号[%s]不存在！" % groupid)
+		send_msg(conn,"【系统提示】群ID号[ %s ]不存在！" % groupid)
 		return 
 	own_userid=res[0][0]
 	own_username=user_userid_name(own_userid)
@@ -1058,14 +1053,14 @@ def user_kickout(conn,args):
 
 	#判断是否为群主,非群主不能踢用户
 	if req_userid != own_userid:
-		send_msg(conn,u'【系统提示】 您不是群[ %s|ID:%s ]的群主，无权移出用户！' % (group_name,groupid))
+		send_msg(conn,u'[ %s ]\n【系统消息】 您不是群[ %s|ID:%s ]的群主，无权移出用户！' % (time.strftime("%Y-%m-%d %X"),group_name,groupid))
 		return
 
 	#判断用户是否存在
 	sql='select id from user where username="%s"' % to_username
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,u"用户[%s]不存在！" % to_username)
+		send_msg(conn,u"【系统提示】用户[ %s ]不存在！" % to_username)
 		return
 	to_userid=res[0][0]
 
@@ -1073,7 +1068,7 @@ def user_kickout(conn,args):
 	sql='select id from group_users where groupid=%s and userid=%s' % (groupid,to_userid)
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,u"用户[%s]不在群[ %s|ID: ]内！" % (to_username,groupname,groupid))
+		send_msg(conn,u"【系统提示】用户[ %s ]不在群[ %s|ID: ]内！" % (to_username,groupname,groupid))
 		return
 
 	###开始清理redis###
@@ -1091,9 +1086,9 @@ def user_kickout(conn,args):
 		notice_userid=r[0]
 		#判断是否被踢用户
 		if notice_userid == to_userid:
-			notice_content='【系统提示】您已被群主[ %s ]移出群[ %s|ID:%s ]！' % (own_username,groupname,groupid)
+			notice_content='[ %s ]\n【群消息】您已被群主[ %s ]移出群[ %s|ID:%s ]！' % (time.strftime("%Y-%m-%d %X"),own_username,groupname,groupid)
 		else:
-			notice_content='【系统提示】用户[ %s ]已被群主[ %s ]移出群[ %s|ID:%s ]！' % (to_username,own_username,groupname,groupid)
+			notice_content='[ %s ]\n【群消息】用户[ %s ]已被群主[ %s ]移出群[ %s|ID:%s ]！' % (time.strftime("%Y-%m-%d %X"),to_username,own_username,groupname,groupid)
 		#判断用户是否在线
 		if user_is_online(notice_userid):
 			notice_conn=get_userid_conn(notice_userid)
@@ -1110,7 +1105,7 @@ def user_delgroup(conn,args):
 	req_userid=get_conn_userid(conn)
 	args_list=args
 	if len(args_list)!=1:
-		send_msg(conn,u'删群的操作参数错误')
+		send_msg(conn,u'【系统提醒】删群的操作参数错误')
 		return	
 	groupid=args_list[0]
 
@@ -1118,14 +1113,14 @@ def user_delgroup(conn,args):
 	sql='select id,own_userid,name from `group` where id=%s' % groupid 
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,"该群ID号[%s]不存在！" % groupid)
+		send_msg(conn,"【系统提醒】该群ID号[ %s ]不存在！" % groupid)
 		return 
 	own_userid=res[0][1]
 	group_name=res[0][2]
 
 	#判断是否为群主,非群主不能删群
 	if req_userid != own_userid:
-		send_msg(conn,u'【系统提示】 您不是群[%s |ID:%s]的群主，无法删群！' % (group_name,groupid))
+		send_msg(conn,u'[ %s ]\n【系统提示】 您不是群[ %s|ID:%s ]的群主，无法删群！' % (time.strftime("%Y-%m-%d %X"),group_name,groupid))
 		return
 
 	#获取群用户，发送删群提示
@@ -1134,7 +1129,7 @@ def user_delgroup(conn,args):
 	if res:
 		for r in res:
 			to_userid=r[0]
-			notice_content='【系统提示】 群主已解散群[%s |ID:%s]！' % (group_name,groupid)
+			notice_content='[ %s ]\n【系统消息】 群主已解散群[ %s|ID:%s ]！' % (time.strftime("%Y-%m-%d %X"),group_name,groupid)
 			#判断用户是否在线
 			if user_is_online(to_userid):
 				to_conn=get_userid_conn(to_userid)
@@ -1181,13 +1176,13 @@ def user_delgroup(conn,args):
 	
 	#更新redis
 
-	send_msg(conn,'【系统提示】 群[%s |ID:%s]已解散！' % (group_name,groupid))
+	send_msg(conn,'[ %s ]\n【系统消息】 群[ %s|ID:%s ]已解散！' % (time.strftime("%Y-%m-%d %X"),group_name,groupid))
 
 def user_nospkuser(conn,args):
 	req_userid=get_conn_userid(conn)
 	args_list=args
 	if len(args_list)!=2:
-		send_msg(conn,u'禁言用户操作参数错误！')
+		send_msg(conn,u'【系统提示】禁言用户操作参数错误！')
 		return	
 	groupid=args_list[0]
 	to_username=args_list[1]
@@ -1195,7 +1190,7 @@ def user_nospkuser(conn,args):
 	sql='select own_userid,name from `group` where id=%s' % groupid 
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,"群ID号[%s]不存在！" % groupid)
+		send_msg(conn,"【系统提示】群ID号[ %s ]不存在！" % groupid)
 		return 
 	own_userid=res[0][0]
 	own_username=user_userid_name(own_userid)
@@ -1203,14 +1198,14 @@ def user_nospkuser(conn,args):
 
 	#判断是否为群主,非群主不能踢用户
 	if req_userid != own_userid:
-		send_msg(conn,u'【系统提示】 您不是群[ %s|ID:%s ]的群主，无权禁言用户！' % (groupname,groupid))
+		send_msg(conn,u'[ %s ]\n【系统消息】 您不是群[ %s|ID:%s ]的群主，无权禁言用户！' % (groupname,groupid))
 		return
 
 	#判断用户是否存在
 	sql='select id from user where username="%s"' % to_username
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,u"用户[%s]不存在！" % to_username)
+		send_msg(conn,u"【系统提示】用户[ %s ]不存在！" % to_username)
 		return
 	to_userid=res[0][0]
 
@@ -1218,12 +1213,12 @@ def user_nospkuser(conn,args):
 	sql='select id,is_forbidden_speaking from group_users where groupid=%s and userid=%s' % (groupid,to_userid)
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,u"用户[%s]不在群[ %s|ID: ]内！" % (to_username,groupname,groupid))
+		send_msg(conn,u"【系统提示】用户[ %s ]不在群[ %s|ID: ]内！" % (to_username,groupname,groupid))
 		return
 	else:
 		is_forbidden_speaking=res[0][1]
 		if is_forbidden_speaking:
-			send_msg(conn,u"【系统提示】用户 [ %s ]在群[ %s|ID:%s ]内已被禁言，无需再次操作！" % (to_username,groupname,groupid))
+			send_msg(conn,u"[ %s ]\n【系统消息】用户 [ %s ]在群[ %s|ID:%s ]内已被禁言，无需再次操作！" % (to_username,groupname,groupid))
 			return
 
 	###开始清理redis###
@@ -1238,9 +1233,9 @@ def user_nospkuser(conn,args):
 		notice_userid=r[0]
 		#判断是否被踢用户
 		if notice_userid == to_userid:
-			notice_content='【系统提示】您已被群[ %s|ID:%s ]的群主[ %s ]禁言！' % (groupname,groupid,own_username)
+			notice_content='[ %s ]\n【系统消息】您已被群[ %s|ID:%s ]的群主[ %s ]禁言！' % (groupname,groupid,own_username)
 		else:
-			notice_content='【系统提示】用户[ %s ]已被群[ %s|ID:%s ]的群主[ %s ]禁言！' % (to_username,groupname,groupid,own_username)
+			notice_content='[ %s ]\n【系统消息】用户[ %s ]已被群[ %s|ID:%s ]的群主[ %s ]禁言！' % (to_username,groupname,groupid,own_username)
 		#判断用户是否在线
 		if user_is_online(notice_userid):
 			notice_conn=get_userid_conn(notice_userid)
@@ -1257,7 +1252,7 @@ def user_spkuser(conn,args):
 	req_userid=get_conn_userid(conn)
 	args_list=args
 	if len(args_list)!=2:
-		send_msg(conn,u'取消禁言用户操作参数错误！')
+		send_msg(conn,u'【系统提示】取消禁言用户操作参数错误！')
 		return	
 	groupid=args_list[0]
 	to_username=args_list[1]
@@ -1265,7 +1260,7 @@ def user_spkuser(conn,args):
 	sql='select own_userid,name from `group` where id=%s' % groupid 
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,"群ID号[%s]不存在！" % groupid)
+		send_msg(conn,"【系统提示】群ID号[ %s ]不存在！" % groupid)
 		return 
 	own_userid=res[0][0]
 	own_username=user_userid_name(own_userid)
@@ -1273,14 +1268,14 @@ def user_spkuser(conn,args):
 
 	#判断是否为群主,非群主不能操作
 	if req_userid != own_userid:
-		send_msg(conn,u'【系统提示】 您不是群[ %s|ID:%s ]的群主，无权取消禁言用户！' % (groupname,groupid))
+		send_msg(conn,u'[ %s ]\n【系统消息】 您不是群[ %s|ID:%s ]的群主，无权取消禁言用户！' % (groupname,groupid))
 		return
 
 	#判断用户是否存在
 	sql='select id from user where username="%s"' % to_username
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,u"用户[%s]不存在！" % to_username)
+		send_msg(conn,u"【系统提示】用户[ %s ]不存在！" % to_username)
 		return
 	to_userid=res[0][0]
 
@@ -1288,12 +1283,12 @@ def user_spkuser(conn,args):
 	sql='select id,is_forbidden_speaking from group_users where groupid=%s and userid=%s' % (groupid,to_userid)
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,u"用户[%s]不在群[ %s|ID: ]内！" % (to_username,groupname,groupid))
+		send_msg(conn,u"【系统提示】用户[ %s ]不在群[ %s|ID: ]内！" % (to_username,groupname,groupid))
 		return
 	else:
 		is_forbidden_speaking=res[0][1]
 		if not is_forbidden_speaking:
-			send_msg(conn,u"【系统提示】用户 [ %s ]在群[ %s|ID:%s ]内未被禁言，无需此操作！" % (to_username,groupname,groupid))
+			send_msg(conn,u"[ %s ]\n【系统消息】用户 [ %s ]在群[ %s|ID:%s ]内未被禁言，无需此操作！" % (to_username,groupname,groupid))
 			return
 
 	###开始清理redis###
@@ -1308,9 +1303,9 @@ def user_spkuser(conn,args):
 		notice_userid=r[0]
 		#判断是否被踢用户
 		if notice_userid == to_userid:
-			notice_content='【系统提示】您已被群[ %s|ID:%s ]的群主[ %s ]取消禁言！' % (groupname,groupid,own_username)
+			notice_content='[ %s ]\n【系统消息】您已被群[ %s|ID:%s ]的群主[ %s ]取消禁言！' % (groupname,groupid,own_username)
 		else:
-			notice_content='【系统提示】用户[ %s ]已被群[ %s|ID:%s ]的群主[ %s ]取消禁言！' % (to_username,groupname,groupid,own_username)
+			notice_content='[ %s ]\n【系统消息】用户[ %s ]已被群[ %s|ID:%s ]的群主[ %s ]取消禁言！' % (to_username,groupname,groupid,own_username)
 		#判断用户是否在线
 		if user_is_online(notice_userid):
 			notice_conn=get_userid_conn(notice_userid)
@@ -1327,7 +1322,7 @@ def user_nospkgroup(conn,args):
 	req_userid=get_conn_userid(conn)
 	args_list=args
 	if len(args_list)!=1:
-		send_msg(conn,u'禁言群操作参数错误！')
+		send_msg(conn,u'【系统提示】禁言群操作参数错误！')
 		return	
 	groupid=args_list[0]
 
@@ -1335,7 +1330,7 @@ def user_nospkgroup(conn,args):
 	sql='select own_userid,name,is_group_forbidden_speaking from `group` where id=%s' % groupid 
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,"群ID号[%s]不存在！" % groupid)
+		send_msg(conn,"【系统提示】群ID号[ %s ]不存在！" % groupid)
 		return 
 
 	own_userid=res[0][0]
@@ -1345,12 +1340,12 @@ def user_nospkgroup(conn,args):
 
 	#判断是否为群主,非群主不能操作
 	if req_userid != own_userid:
-		send_msg(conn,u'【系统提示】 您不是群[ %s|ID:%s ]的群主，无权禁言群！' % (groupname,groupid))
+		send_msg(conn,u'[ %s ]\n【系统消息】 您不是群[ %s|ID:%s ]的群主，无权禁言群！' % (groupname,groupid))
 		return
 
 	#判断当前群是否被禁言
 	if is_group_forbidden_speaking:
-		send_msg(conn,u"【系统提示】群[ %s|ID:%s ]内已被禁言，无需再次操作！" % (groupname,groupid))
+		send_msg(conn,u"[ %s ]\n【系统消息】群[ %s|ID:%s ]内已被禁言，无需再次操作！" % (groupname,groupid))
 		return
 
 	###开始清理redis###
@@ -1363,7 +1358,7 @@ def user_nospkgroup(conn,args):
 	res=sql_query(sql)
 	for r in res:
 		notice_userid=r[0]
-		notice_content='【系统提示】群[ %s|ID:%s ]已被群主[ %s ]禁言！' % (groupname,groupid,own_username)
+		notice_content='[ %s ]\n【系统消息】群[ %s|ID:%s ]已被群主[ %s ]禁言！' % (groupname,groupid,own_username)
 		#判断用户是否在线
 		if user_is_online(notice_userid):
 			notice_conn=get_userid_conn(notice_userid)
@@ -1380,7 +1375,7 @@ def user_spkgroup(conn,args):
 	req_userid=get_conn_userid(conn)
 	args_list=args
 	if len(args_list)!=1:
-		send_msg(conn,u'取消禁言群操作参数错误！')
+		send_msg(conn,u'【系统提示】取消禁言群操作参数错误！')
 		return	
 	groupid=args_list[0]
 
@@ -1388,7 +1383,7 @@ def user_spkgroup(conn,args):
 	sql='select own_userid,name,is_group_forbidden_speaking from `group` where id=%s' % groupid 
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,"群ID号[%s]不存在！" % groupid)
+		send_msg(conn,"【系统提示】群ID号[ %s ]不存在！" % groupid)
 		return 
 
 	own_userid=res[0][0]
@@ -1398,12 +1393,12 @@ def user_spkgroup(conn,args):
 
 	#判断是否为群主,非群主不能操作
 	if req_userid != own_userid:
-		send_msg(conn,u'【系统提示】 您不是群[ %s|ID:%s ]的群主，无权取消群禁言！' % (groupname,groupid))
+		send_msg(conn,u'【系统消息】 您不是群[ %s|ID:%s ]的群主，无权取消群禁言！' % (groupname,groupid))
 		return
 
 	#判断当前群是否被禁言
 	if not is_group_forbidden_speaking:
-		send_msg(conn,u"【系统提示】群[ %s|ID:%s ]内未被禁言，无需此操作！" % (groupname,groupid))
+		send_msg(conn,u"【系统消息】群[ %s|ID:%s ]内未被禁言，无需此操作！" % (groupname,groupid))
 		return
 
 	###开始清理redis###
@@ -1416,7 +1411,7 @@ def user_spkgroup(conn,args):
 	res=sql_query(sql)
 	for r in res:
 		notice_userid=r[0]
-		notice_content='【系统提示】群[ %s|ID:%s ]已被群主[ %s ]取消禁言！' % (groupname,groupid,own_username)
+		notice_content='[ %s ]\n【系统消息】群[ %s|ID:%s ]已被群主[ %s ]取消禁言！' % (groupname,groupid,own_username)
 		#判断用户是否在线
 		if user_is_online(notice_userid):
 			notice_conn=get_userid_conn(notice_userid)
@@ -1660,8 +1655,8 @@ def handle_epollout(fd,c_sock):
 			fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 			return
 		elif cmd == 'logout':
-			print(u'[ %s ] 您已退出系统' % time.strftime("%Y-%m-%d %X"))
-			send_msg(c_sock,u'您退出系统！')
+			print(u'[ %s ] 退出系统' % time.strftime("%Y-%m-%d %X"))
+			send_msg(c_sock,u'退出系统！')
 			#清除认证用户列表
 			del_online_sock(c_sock)
 			#重置执行命令的列表
@@ -1670,10 +1665,10 @@ def handle_epollout(fd,c_sock):
 			if fd in auth_fd_to_socket.keys():
 				del auth_fd_to_socket[fd]
 		elif cmd == 'auth':
-			send_msg(c_sock,u'提示!您已认证！')
+			send_msg(c_sock,u'【系统提示】提示!您已认证！')
 		elif cmd not in noargs_cmd+args_cmd:
 			print(u'[ %s ] 客户端的命令不支持,请使用 help/?' % time.strftime("%Y-%m-%d %X"))
-			send_msg(c_sock,u'输入的命令不支持,请使用 help/?')
+			send_msg(c_sock,u'【系统提示】输入的命令不支持,请使用 help/?')
 		else:
 			args=message.split(' ')[1:]
 			#命令分发
