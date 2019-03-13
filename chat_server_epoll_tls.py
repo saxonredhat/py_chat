@@ -27,6 +27,18 @@ db_config={
 
 #redis配置
 r_redis=redis.Redis(host='localhost',port=6379,db=0)
+#redis键值模板
+KV_EXISTS_GROUPID=u'kv_exists_groupid:groupid:%s'
+KV_GROUPID_GET_GROUPNAME=u'kv_groupid_get_groupname:groupid:%s'
+KV_GROUPID_GET_OWN_USERID=u'kv_groupid_get_own_userid:groupid:%s'
+KV_USERID_IN_GROUPID=u'kv_userid_in_groupid:userid:%s:groupid:%s'
+KV_OWNUSERID_OWN_GROUPID=u'kv_ownuserid_own_groupid:own_userid:%s:groupid:%s'
+KV_USERID_GET_USERNAME=u'kv_userid_get_username:userid:%s'
+KV_USERNAME_GET_USERID=u'kv_username_get_userid:username:%s'
+KV_USERID_ISFRIEND_USERID=u'kv_userid_isfriend_userid:userid:%s:userid:%s'
+LIST_GROUPMESSAGES_OF_USERID_IN_GROUPID=u'list_groupmessages_of_userid_in_groupid:groupid:%s:userid:%s'
+LIST_USERIDS_OF_GROUPID=u'list_userids_of_groupid:groupid:%s'
+LIST_USERMESSAGES_OF_USERID=u'list_usermessages_of_userid:userid:%s'
 
 #TLS配置
 CERTFILE='ssl/server.crt'
@@ -43,41 +55,42 @@ except:
 noargs_cmd=['listfriends','lf','listgroup','lg','listallgroup','lag','close','logout']
 
 #参数命令
-args_cmd=['msg','m','gmsg','gm','adduser','au','deluser','du','addgroup','ag','exitgroup','eg','reject','rj','accept','ac','creategroup','cg','delgroup','dg','listgroupusers','lgu','auth','echo']
+args_cmd=['msg','m','gmsg','gm','adduser','au','deluser','du','entergroup','eng','exitgroup','exg','kickout','ko','reject','rj','accept','ac','creategroup','cg','delgroup','dg','listgroupusers','lgu','auth','echo']
 
 #命令帮助
 cmd_help="""
 	 ===============================================
-	|											   |
-	|				命令使用说明:				  |
-	|											   |
+	|                                               |
+	|                命令使用说明:                  |
+	|                                               |
 	 ===============================================
-	|命令	 参数1	  参数2   (说明)			 | 
+	|命令       参数1    参数2   (说明)             | 
 	 ===============================================
-	|auth	 用户名	 密码	(登录系统)		 |
-	|msg/m	用户名	 消息	(给用户发送消息)   |
-	|gmsg/gm  群ID	   消息	(给群发送消息)	 |
+	|auth       用户名   密码    (登录系统)         |
+	|msg/m      用户名   消息    (给用户发送消息)   |
+	|gmsg/gm    群ID     消息    (给群发送消息)     |
+	|kickout/ko 群ID     用户    (踢出群用户)       |
 	 ===============================================
-	|命令				参数	(说明)			 |
+	|命令                参数    (说明)             |
 	 ===============================================
-	|echo				消息	(回显消息)		 |
-	|adduser/au		  用户名  (添加好友)		 |
-	|deluser/du		  用户名  (删除好友)		 |
-	|creategroup/cg	  群名	(建群)			 |
-	|delgroup/dg		 群ID	(删群)			 |
-	|addgroup/ag		 群ID	(加群)			 |
-	|exitgroup/eg		群ID	(退群)			 |
-	|reject/rj		   请求ID  (同意加好友|进群)  |
-	|accept/ac		   请求ID  (拒绝加好友|进群)  |
-	|listgroupusers/lgu  群ID	(列出群成员信息)   |
+	|echo                消息    (回显消息)         |
+	|adduser/au          用户名  (添加好友)         |
+	|deluser/du          用户名  (删除好友)         |
+	|creategroup/cg      群名    (建群)             |
+	|delgroup/dg         群ID    (删群)             |
+	|entergroup/eng      群ID    (加群)             |
+	|exitgroup/exg       群ID    (退群)             |
+	|reject/rj           请求ID  (同意加好友|进群)  |
+	|accept/ac           请求ID  (拒绝加好友|进群)  |
+	|listgroupusers/lgu  群ID    (列出群成员信息)   |
 	 ===============================================
-	|命令				(说明)					 |
+	|命令                (说明)                     |
 	 ===============================================
-	|listfriends/lf	  (列出好友)				 |
-	|listgroup/lg		(列出创建的群|列出加入的群)|
-	|listallgroup/lag	(列出系统所有的群)		 |
-	|logout			  (退出)					 |
-	|close			   (关闭对话)				 |
+	|listfriends/lf      (列出好友)                 |
+	|listgroup/lg        (列出创建的群|列出加入的群)|
+	|listallgroup/lag    (列出系统所有的群)         |
+	|logout              (退出)                     |
+	|close               (关闭对话)                 |
 	 ===============================================
 """
 
@@ -115,10 +128,10 @@ def send_msg(conn,msg):
 	msg_len=struct.pack('H',len(bytes(msg,encoding='utf-8')))
 	try:
 		conn.sendall(msg_len+bytes(msg,encoding='utf-8'))
+		return True
 	except:
-		#del_online_sock(conn)
-		#sel.unregister(conn)
 		conn.close()
+		return False
 
 def sql_query(sql):
 	db=pymysql.connect(**db_config)
@@ -180,8 +193,9 @@ def user_is_online(userid):
 	return False
 
 def get_userid_conn(userid):
+	print(userid_to_socket)
 	for uid,conn_user in userid_to_socket.items():
-		if userid == uid:
+		if int(userid) == uid:
 			return conn_user
 
 def user_auth(user,pwd):
@@ -263,7 +277,7 @@ def push_new_msg(conn,user_id):
 	#是否收到群消息
 	for groupid in groupid_list:
 		#判断是否需要推送给当前用户
-		r_key='list_groupid_group_messages_userid:groupid:%s:userid:%s' % (groupid,user_id)
+		r_key=LIST_GROUPMESSAGES_OF_USERID_IN_GROUPID % (groupid,user_id)
 		l_len=r_redis.llen(r_key)
 		if l_len:
 			#获取该消息列表
@@ -274,7 +288,7 @@ def push_new_msg(conn,user_id):
 				
 	#是否收到用户消息
 	#查询redis数据库是否有该用户的数据
-	r_key="list_user_message:userid:%s" % user_id
+	r_key=LIST_USERMESSAGES_OF_USERID % user_id
 	msg_count=r_redis.llen(r_key)
 	print("msg_count:",msg_count)
 	if msg_count:
@@ -316,15 +330,16 @@ def push_new_msg(conn,user_id):
 def user_msg(conn,args):
 	from_userid=get_conn_userid(conn)
 	#加载redis中的数据
-	r_key=u'kv_userid_map_username:userid:%s' % from_userid 
-	from_username=r_redis.get(r_key).decode('utf-8')
+	r_key=KV_USERID_GET_USERNAME % from_userid 
+	if r_redis.exists(r_key) and r_redis.get(r_key):
+		from_username=r_redis.get(r_key).decode('utf-8')
 	#redis不存在对应username
-	if not from_username:
+	else:
 		sql='select username from user where id=%s' % from_userid 
 		res=sql_query(sql)
 		if not res:
 			print(u'[ %s ] 用户id[%s]在系统中不存在' % (time.strftime("%Y-%m-%d %X"),from_userid))	
-			send_msg(conn,u'[ 系统消息 ] 用户id[%s]在系统中不存在' % from_userid)
+			send_msg(conn,u'【系统提示】 用户id[%s]在系统中不存在' % from_userid)
 			return
 		from_username=res[0][0]
 		#把结果写入redis
@@ -333,7 +348,7 @@ def user_msg(conn,args):
 	content=' '.join(args[1:])
 
 	#加载redis中的数据
-	r_key=u'kv_username_map_userid:username:%s' % to_username 
+	r_key=KV_USERNAME_GET_USERID % to_username 
 	if r_redis.exists(r_key) and r_redis.get(r_key):
 		to_userid=r_redis.get(r_key).decode('utf-8')
 	#redis不存在对应username
@@ -342,50 +357,47 @@ def user_msg(conn,args):
 		res=sql_query(sql)
 		if not res:
 			print(u'[ %s ] 用户%s在系统中不存在' % (time.strftime("%Y-%m-%d %X"),to_username))	
-			send_msg(conn,u'[ 系统消息 ] 用户%s在系统中不存在' % to_username)
+			send_msg(conn,u'【系统提示】 用户%s在系统中不存在' % to_username)
 			return	
 		to_userid=res[0][0]
 		#把结果写入redis
 		r_redis.set(r_key,to_userid)
+
 	#判断是否为自己发送给自己
-	if from_userid == to_userid:
+	print("from_userid,to_userid",type(from_userid),type(to_userid))
+	if from_userid == int(to_userid):
 		user_msg=u'%s\n[ %s ]: %s' % (time.strftime("%Y-%m-%d %X"),from_username,content)
 		send_msg(conn,user_msg)
 		return
 	#判断当前发送消息的接收方是否为好友，如果不是拒绝发送消息
 	#加载redis中的数据
-	r_key=u'kv_user_to_user:userid:%s:%s' % (from_userid,to_userid) 
+	r_key=KV_USERID_ISFRIEND_USERID % (from_userid,to_userid)
 	is_friend=r_redis.exists(r_key)
 	if not is_friend:
 		sql='select userid from user_users where userid=%s and friend_userid=%s' % (from_userid,to_userid)
 		res=sql_query(sql)
 		if not res:
-			send_msg(conn,u'该用户还不是您的好友！不能发送消息')
+			send_msg(conn,u'【系统提示】 该用户还不是您的好友！不能发送消息')
 			return 
 		 #把结果写入redis
 		r_redis.set(r_key,"")
 	to_conn=get_userid_conn(to_userid)
-	user_msg=u'%s\n[ %s ]: %s' % (time.strftime("%Y-%m-%d %X"),from_username,content)
+	send_time=time.strftime("%Y-%m-%d %X")
+	user_msg=u'[ %s ]\n【好友消息】【%s】: %s' % (send_time,from_username,content)
 	if to_conn:
+		print("对方在线！！！！")
 		try:
 			send_msg(to_conn,user_msg)
 		except:
-			send_time=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-			r_key=u'list_user_message:userid:%s' % to_userid
-			r_value='%s\n[ %s ]:%s' % (send_time,from_username,to_username)
-			r_redis.rpush(r_key,r_value) 
-			print("[redis写入]%s-->%s\n" % (r_key,r_value))
-			#sql='insert into msg(userid,to_userid,content,is_pushed) values(%s,%s,"%s",0)' % (from_userid,to_userid,content)
-			#sql_dml(sql)
+			r_key=LIST_USERMESSAGES_OF_USERID % to_userid
+			r_redis.rpush(r_key,user_msg) 
+			print("[redis写入]%s-->%s" % (r_key,user_msg))
 	else:
-		send_time=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-		r_key=u'list_user_message:userid:%s' % to_userid
-		r_value='%s\n[ %s ]:%s' % (send_time,from_username,to_username)
-		r_redis.rpush(r_key,r_value) 
-		print("redis写入:%s->%s" % (r_key,r_value))
-		print("[redis写入]%s-->%s\n" % (r_key,r_value))
-		#sql='insert into msg(userid,to_userid,content,is_pushed) values(%s,%s,"%s",0)' % (from_userid,to_userid,content)
-		#sql_dml(sql)
+		print("对方不在线！！！！")
+		r_key=LIST_USERMESSAGES_OF_USERID % to_userid
+		r_redis.rpush(r_key,user_msg) 
+		print("redis写入:%s->%s" % (r_key,user_msg))
+	user_msg=u'[ %s ]\n【发送消息】->【%s】（好友）: %s' % (send_time,to_username,content)
 	send_msg(conn,user_msg)
 
 def user_gmsg(conn,args):
@@ -400,7 +412,7 @@ def user_gmsg(conn,args):
 
 	#判断群是否存在
 	#读取redis	
-	r_key=u'kv_groupid:groupid:%s' % groupid 
+	r_key=KV_EXISTS_GROUPID % groupid 
 	if not r_redis.exists(r_key):
 		sql='select id,own_userid,name from `group` where id=%s' % groupid 
 		res=sql_query(sql)
@@ -410,9 +422,10 @@ def user_gmsg(conn,args):
 		r_redis.set(r_key,"")
 
 	#读取redis	
-	r_key=u'kv_groupid_map_own_userid:groupid:%s' % groupid
-	own_userid=r_redis.get(r_key).decode('utf-8')
-	if not own_userid:
+	r_key=KV_GROUPID_GET_OWN_USERID % groupid
+	if r_redis.exists(r_key) and r_redis.get(r_key):
+		own_userid=r_redis.get(r_key).decode('utf-8')
+	else:
 		sql='select own_userid from `group` where id=%s' % groupid
 		res=sql_query(sql)
 		if res:
@@ -420,7 +433,7 @@ def user_gmsg(conn,args):
 			r_redis.set(r_key,own_userid)
 
 	#读取redis	
-	r_key=u'kv_groupid_map_groupname:groupid:%s' % groupid
+	r_key=KV_GROUPID_GET_GROUPNAME % groupid
 	if r_redis.exists(r_key) and r_redis.get(r_key):
 		group_name=r_redis.get(r_key).decode('utf-8')
 	else:
@@ -432,20 +445,21 @@ def user_gmsg(conn,args):
 
 	#判断是否为群成员，非成员不能发送消息
 	#读取redis
-	r_key=u'kv_userid_map_groupid:userid:%s:groupid:%s' % (req_userid,groupid)
+	r_key=KV_USERID_IN_GROUPID % (req_userid,groupid)
 	if not r_redis.exists(r_key):
 		sql='select id from group_users where groupid=%s and userid=%s' % (groupid,req_userid)
 		res=sql_query(sql)
 		if not res:
-			send_msg(conn,"您非群[%s |ID:%s]成员，不能发送群信息！" % (group_name,groupid))
+			send_msg(conn,"【系统提示】您非群[%s |ID:%s]成员，不能发送群信息！" % (group_name,groupid))
 			return
 		r_redis.set(r_key,"")
 
 	#获取群用户，发送群消息
 	#清空列表
-	gmsg_content='%s\n[ 群消息 ][%s |ID:%s][%s]:%s' % (time.strftime("%Y-%m-%d %X"),group_name,groupid,req_username,content)
+	send_time=time.strftime("%Y-%m-%d %X")
+	gmsg_content='%s\n【群消息】【%s|ID:%s】【%s】:%s' % (send_time,group_name,groupid,req_username,content)
 	userid_list=[]
-	r_key=u'list_groupid_has_userid:groupid:%s' % groupid
+	r_key=LIST_USERIDS_OF_GROUPID % groupid
 	if r_redis.llen(r_key):
 		for uid in r_redis.lrange(r_key,0,-1):
 			userid_list.append(int(uid.decode('utf-8')))
@@ -459,19 +473,18 @@ def user_gmsg(conn,args):
 			r_redis.rpush(r_key,to_userid)
 		
 	for to_userid in userid_list:
+		#判断是否是本人发送
+		if to_userid == req_userid:
+			send_msg(conn,u'[ %s ]\n【发送消息】->【%s|ID:%s】(群):%s' % (send_time,group_name,groupid,content))
+			continue
+			
 		#判断用户是否在线
 		if user_is_online(to_userid):
 			to_conn=get_userid_conn(to_userid)
 			send_msg(to_conn,gmsg_content)
 		else:
-			r_key=u'list_groupid_group_messages_userid:groupid:%s:userid:%s' % (groupid,to_userid)
+			r_key=LIST_GROUPMESSAGES_OF_USERID_IN_GROUPID % (groupid,to_userid)
 			r_redis.rpush(r_key,gmsg_content)
-			
-	#判断需要发送消息的用户列表长度，大于0则需要把消息写进list_group_messages:groupid:%s
-	#r_key=u'hset_group_message_groupid_need_push_userids:groupid:%s' % groupid
-	#if r_redis.hlen(r_key):
-	#	r_key=u'list_group_messages:groupid:%s' % groupid
-	#	r_redis.rpush(r_key,gmsg_content)
 
 def user_adduser(conn,args):
 	userid=get_conn_userid(conn)	
@@ -481,6 +494,7 @@ def user_adduser(conn,args):
 		send_msg(conn,u'添加好友的命令错误')
 		return
 	to_username=args_list[0]
+	#判断用户是否存在
 	sql='select id from user where username="%s"' % to_username
 	res=sql_query(sql)
 	if not res:
@@ -538,12 +552,24 @@ def user_deluser(conn,args):
 	if not res:
 		send_msg(conn,u"您和用户[%s]不是好友关系" % to_username)
 		return
+
+	###开始清除redis###
+	r_key=KV_USERID_ISFRIEND_USERID % (userid,del_userid)
+	r_redis.delete(r_key)
+	print("redis删除键值:%s",r_key)
+
+	r_key=KV_USERID_ISFRIEND_USERID % (del_userid,userid)
+	r_redis.delete(r_key)
+	print("redis删除键值:%s",r_key)
+	###结束清除redis###
+
 	#双向解除好友关系
 	sql='delete from user_users where userid=%s and friend_userid=%s' % (userid,del_userid) 
 	sql_dml(sql)
 	sql='delete from user_users where userid=%s and friend_userid=%s' % (del_userid,userid) 
 	sql_dml(sql)
 	send_msg(conn,u"您和用户[%s]已经解除好友关系" % to_username)
+	
 	
 	#通知对方
 	to_conn=get_userid_conn(del_userid)
@@ -555,7 +581,7 @@ def user_deluser(conn,args):
 		sql_dml(notice_sql)
 	
 
-def user_addgroup(conn,args):
+def user_entergroup(conn,args):
 	req_userid=get_conn_userid(conn)
 	#判断参数是否正确
 	args_list=args
@@ -637,10 +663,21 @@ def user_exitgroup(conn,args):
 		send_msg(conn,u'您是群[%s |ID:%s]的群主，无法退群！' % (group_name,groupid))
 		return
 
+	###开始清除redis###
+	r_key=KV_USERID_IN_GROUPID % (req_userid,groupid)
+	r_redis.delete(r_key)
+
+	r_key=LIST_USERIDS_OF_GROUPID % groupid
+	r_redis.delete(r_key)
+
+	LIST_GROUPMESSAGES_OF_USERID_IN_GROUPID % (groupid,req_userid)
+	r_redis.delete(r_key)
+	###结束清除redis###
 	#退群请求
 	sql='delete from group_users where userid=%s and groupid=%s' % (req_userid,groupid)
 	sql_dml(sql)
 	send_msg(conn,u'您已退出群[%s |ID:%s]！' % (group_name,groupid))
+
 	#判断群主是否在在线，在线直接发送退群提醒，如果不在线，把退群消息加入到user_notice	
 	notice_content=u'用户[%s]退出群[%s |ID号:%s]' % (req_username,group_name,groupid)
 	if user_is_online(own_userid):
@@ -667,6 +704,7 @@ def user_accept(conn,args):
 	add_userid=res[0][2]
 	add_groupid=res[0][3]
 	#判断是加群还是添加好友 
+	#加好友
 	if add_userid:
 		#判断当前用户是否有权限执行
 		if cur_userid != add_userid:
@@ -678,11 +716,12 @@ def user_accept(conn,args):
 		sql_dml(sql)
 		sql='insert into user_users(userid,friend_userid,created_at) values(%s,%s,now())' % (add_userid,req_userid)
 		sql_dml(sql)
-	
+
 		#消息提醒内容
 		notice_content=u'用户%s已经同意添加您为好友!' % user_userid_name(add_userid)
 		send_msg(conn,u'您已同意添加%s为好友' % user_userid_name(add_userid))
 
+	#加群
 	if add_groupid:
 		#判断当前用户是否是群主,非群主不能执行该操作
 		sql='select own_userid from `group` where id=%s' % add_groupid
@@ -698,6 +737,7 @@ def user_accept(conn,args):
 		#把用户加入群
 		sql='insert into group_users(userid,groupid,created_at) values(%s,%s,now())' % (req_userid,add_groupid)
 		sql_dml(sql)
+
 
 		#获取群的信息
 		sql='select id,name,own_userid from `group` where id=%s' % add_groupid
@@ -959,6 +999,75 @@ def user_creategroup(conn,args):
 	
 	send_msg(conn,u'群[%s]已经创建完成！' % group_name)
 
+def user_kickout(conn,args):
+	req_userid=get_conn_userid(conn)
+	args_list=args
+	if len(args_list)!=2:
+		send_msg(conn,u'操作参数错误')
+		return	
+	groupid=args_list[0]
+	to_username=args_list[1]
+	#判断群是否存在
+	sql='select own_userid,name from `group` where id=%s' % groupid 
+	res=sql_query(sql)
+	if not res:
+		send_msg(conn,"群ID号[%s]不存在！" % groupid)
+		return 
+	own_userid=res[0][0]
+	groupname=res[0][1]
+	#获取群主名
+	own_username=user_userid_name(own_userid)
+
+	#判断用户是否存在
+	sql='select id from user where username="%s"' % to_username
+	res=sql_query(sql)
+	if not res:
+		send_msg(conn,u"用户[%s]不存在！" % to_username)
+		return
+	to_userid=res[0][0]
+
+	#判断当前用户是否在群内
+	sql='select id from group_users where groupid=%s and userid=%s' % (groupid,to_userid)
+	res=sql_query(sql)
+	if not res:
+		send_msg(conn,u"用户[%s]不在群[ %s|ID: ]内！" % (to_username,groupname,groupid))
+		return
+
+	#判断是否为群主,非群主不能踢用户
+	if req_userid != own_userid:
+		send_msg(conn,u'【系统提示】 您不是群[ %s|ID:%s ]的群主，无权踢出用户！' % (group_name,groupid))
+		return
+
+	###开始清理redis###
+	r_key=KV_USERID_IN_GROUPID % (to_userid,groupid)
+	r_redis.delete(r_key)
+
+	r_key=LIST_USERIDS_OF_GROUPID % groupid
+	r_redis.delete(r_key)
+	###结束清理redis###
+
+	#提醒群用户
+	sql='select userid from group_users where groupid=%s' % groupid
+	res=sql_query(sql)
+	for r in res:
+		notice_userid=r[0]
+		#判断是否被踢用户
+		if notice_userid == to_userid:
+			notice_content='【系统提示】您已被群主[ %s ]移出群[ %s|ID:%s ]！' % (own_username,groupname,groupid)
+		else:
+			notice_content='【系统提示】用户[ %s ]已被群主[ %s ]移出群[ %s|ID:%s ]！' % (to_username,own_username,groupname,groupid)
+		#判断用户是否在线
+		if user_is_online(notice_userid):
+			notice_conn=get_userid_conn(notice_userid)
+			send_msg(notice_conn,notice_content)
+		else:
+			notice_sql='insert into user_notice(userid,content,status,created_at) values(%s,"%s",0,now())' % (notice_userid,notice_content)
+			sql_dml(notice_sql)
+
+	#踢出用户
+	sql='delete from group_users where groupid=%s and userid=%s' % (groupid,to_userid)
+	sql_dml(sql)
+
 def user_delgroup(conn,args):
 	req_userid=get_conn_userid(conn)
 	args_list=args
@@ -978,7 +1087,7 @@ def user_delgroup(conn,args):
 
 	#判断是否为群主,非群主不能删群
 	if req_userid != own_userid:
-		send_msg(conn,u'您不是群[%s |ID:%s]的群主，无法删群！' % (group_name,groupid))
+		send_msg(conn,u'【系统提示】 您不是群[%s |ID:%s]的群主，无法删群！' % (group_name,groupid))
 		return
 
 	#获取群用户，发送删群提示
@@ -987,7 +1096,7 @@ def user_delgroup(conn,args):
 	if res:
 		for r in res:
 			to_userid=r[0]
-			notice_content='[系统消息] 群主已解散群[%s |ID:%s]！' % (group_name,groupid)
+			notice_content='【系统提示】 群主已解散群[%s |ID:%s]！' % (group_name,groupid)
 			#判断用户是否在线
 			if user_is_online(to_userid):
 				to_conn=get_userid_conn(to_userid)
@@ -995,6 +1104,34 @@ def user_delgroup(conn,args):
 			else:
 				notice_sql='insert into user_notice(userid,content,status,created_at) values(%s,"%s",0,now())' % (to_userid,notice_content)
 				sql_dml(notice_sql)
+	
+	###开始更新redis###
+	r_key=KV_EXISTS_GROUPID % groupid
+	r_redis.delete(r_key)
+
+	r_key=KV_GROUPID_GET_GROUPNAME % groupid
+	r_redis.delete(r_key)
+
+	r_key=KV_GROUPID_GET_OWN_USERID % groupid
+	r_redis.delete(r_key)
+
+	r_key=KV_OWNUSERID_OWN_GROUPID % (own_userid,groupid)
+	r_redis.delete(r_key)
+
+	r_key=LIST_USERIDS_OF_GROUPID % groupid
+	r_redis.delete(r_key)
+
+	sql='select userid from group_users where groupid=%s' % groupid
+	res=sql_query(sql)
+	for r in res:
+		uid=r[0]
+		r_key=KV_USERID_IN_GROUPID % (uid,groupid)
+		r_redis.delete(r_key)
+
+		r_key=LIST_GROUPMESSAGES_OF_USERID_IN_GROUPID % (groupid,uid)
+		r_redis.delete(r_key)
+
+	###结束更新redis###
 			
 	#删除群用户
 	sql='delete from group_users where groupid=%s ' % groupid
@@ -1003,12 +1140,16 @@ def user_delgroup(conn,args):
 	#删群
 	sql='delete from `group` where id=%s ' % groupid 
 	sql_dml(sql)
+	
+	#更新redis
 
-	send_msg(conn,'[系统消息] 群[%s |ID:%s]已解散！' % (group_name,groupid))
+	send_msg(conn,'【系统提示】 群[%s |ID:%s]已解散！' % (group_name,groupid))
 
 def close_clear_all(conn,fd):
 	print("清理客户端中...")
 	epoll.unregister(fd)
+	#从命令统计列表删除
+	del fd_to_command_count[fd]
 	#从在线userid2sock删除
 	del_online_sock(conn)
 	#从queue队列中删除
@@ -1235,6 +1376,8 @@ def handle_epollout(fd,c_sock):
 			send_msg(c_sock,u'您退出系统！')
 			#清除认证用户列表
 			del_online_sock(c_sock)
+			#重置执行命令的列表
+			fd_to_command_count[fd]=0
 			#清除登录列表的记录
 			if fd in auth_fd_to_socket.keys():
 				del auth_fd_to_socket[fd]
@@ -1254,10 +1397,13 @@ def handle_epollout(fd,c_sock):
 				'au': user_adduser,
 				'deluser': user_deluser,
 				'du': user_deluser,
-				'addgroup': user_addgroup,
-				'ag': user_addgroup,
+				'entergroup': user_entergroup,
+				'eng': user_entergroup,
 				'exitgroup': user_exitgroup,
-				'eg': user_exitgroup,
+				'exg': user_exitgroup,
+				'kickout': user_kickout,
+				'ko': user_kickout,
+				'reject': user_reject,
 				'reject': user_reject,
 				'rj': user_reject,
 				'accept': user_accept,
@@ -1289,7 +1435,7 @@ def load_data2redis():
 		for r in res:
 			userid=r[0]
 			friend_userid=r[1]
-			r_key=u'kv_user_to_user:userid:%s:%s' % (userid,friend_userid)
+			r_key=KV_USERID_ISFRIEND_USERID % (userid,friend_userid)
 			r_redis.set(r_key,'')
 
 	#查询群包含的群成员
@@ -1298,7 +1444,7 @@ def load_data2redis():
 	res=sql_query(sql)
 	for r in res:
 		groupid=r[0]
-		r_key=u'list_groupid_has_userid:groupid:%s' % groupid
+		r_key=LIST_USERIDS_OF_GROUPID % groupid
 		r_redis.ltrim(r_key,1,0)
 
 	sql='select userid,groupid from group_users'
@@ -1306,7 +1452,7 @@ def load_data2redis():
 	for r in res:
 		userid=int(r[0])
 		groupid=r[0]	
-		r_key=u'list_groupid_has_userid:groupid:%s' % groupid
+		r_key=LIST_USERIDS_OF_GROUPID % groupid
 		r_redis.rpush(r_key,userid)
 
 	#查询所有群ID，所有群成员ID列表
@@ -1314,13 +1460,13 @@ def load_data2redis():
 	res=sql_query(sql)
 	for r in res:
 		gid=r[0]
-		r_key=u'kv_groupid:groupid:%s' % gid
+		r_key=KV_EXISTS_GROUPID % gid
 		r_redis.set(r_key,"")
 		sql='select userid from group_users where groupid=%s' % gid
 		res2=sql_query(sql)
 		for r2 in res2:
 			uid=r2[0]
-			r_key=u'kv_groupid_map_userid:groupid:%s:userid:%s' % (gid,uid)
+			r_key=KV_USERID_IN_GROUPID % (gid,uid)
 			r_redis.set(r_key,"")
 			
 	#查询所有用户名的到userid和userid到用户名的映射关系
@@ -1329,10 +1475,11 @@ def load_data2redis():
 	for r in res:
 		uid=r[0]
 		name=r[1]
-		r_key=u'kv_username_map_userid:username:%s' % name	
-		r_key2='kv_userid_map_username:userid:%s' % uid	
+		r_key=KV_USERNAME_GET_USERID % name	
 		r_redis.set(r_key,uid)	
-		r_redis.set(r_key2,name)	
+
+		r_key=KV_USERID_GET_USERNAME % uid	
+		r_redis.set(r_key,name)	
 
 	#查询所有群名的到groupid、groupid到群名、群主userid到群groupid、群groupid到群主userid的映射关系
 	sql='select id,name,own_userid from `group`'
@@ -1341,14 +1488,12 @@ def load_data2redis():
 		gid=r[0]
 		gname=r[1]
 		own_uid=r[2]
-		r_key=u'kv_groupname_map_groupid:groupname:%s' % gname	
-		r_redis.set(r_key,gid)	
-		r_key=u'kv_groupid_map_groupname:groupid:%s' % gid
+		r_key=KV_GROUPID_GET_GROUPNAME % gid
 		r_redis.set(r_key,gname)	
-		r_key=u'kv_groupid_map_own_userid:groupid:%s' % gid 
+		r_key=KV_GROUPID_GET_OWN_USERID % gid 
 		r_redis.set(r_key,own_uid)	
-		r_key=u'kv_own_userid_map_groupid:own_userid:%s' % own_uid
-		r_redis.set(r_key,gid)	
+		r_key=KV_OWNUSERID_OWN_GROUPID % (own_uid,gid)
+		r_redis.set(r_key,"")	
 
 
 	#查询用户包含的群ID列表
@@ -1360,7 +1505,7 @@ def load_data2redis():
 		res2=sql_query(sql)
 		for r2 in res:
 			gid=r2[0]
-			r_key=u'kv_userid_map_groupid:userid:%s:groupid:%s' % (uid,gid)
+			r_key=KV_USERID_IN_GROUPID % (uid,gid)
 			r_redis.set(r_key,"")
 
 #启动服务
