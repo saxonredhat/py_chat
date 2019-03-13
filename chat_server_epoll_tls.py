@@ -272,6 +272,8 @@ def user_conn_auth(conn,cli_ip,cli_port):
 			return True
 			
 def push_new_msg(conn,user_id):
+	#延时0.2秒
+	time.sleep(0.2)
 	#获取用户拥有的群的id
 	sql='select groupid from group_users where userid=%s' % user_id
 	groupid_list=[]
@@ -280,6 +282,7 @@ def push_new_msg(conn,user_id):
 		groupid=r[0]
 		groupid_list.append(r[0])
 
+	all_msg_list=[]
 	#是否收到群消息
 	for groupid in groupid_list:
 		#判断是否需要推送给当前用户
@@ -287,7 +290,8 @@ def push_new_msg(conn,user_id):
 		l_len=r_redis.llen(r_key)
 		for seq in range(0,l_len):
 			gmsg=r_redis.lpop(r_key).decode('utf-8')
-			send_msg(conn,gmsg)
+			all_msg_list.append(gmsg)
+			#send_msg(conn,gmsg)
 				
 	#是否收到用户消息
 	#查询redis数据库是否有该用户的数据
@@ -295,16 +299,21 @@ def push_new_msg(conn,user_id):
 	msg_count=r_redis.llen(r_key)
 	for i in range(0,msg_count):	
 		msg=r_redis.lpop(r_key).decode('utf-8')
-		send_msg(conn,msg)
+		all_msg_list.append(msg)
+		#send_msg(conn,msg)
 
 	#是否收到提醒消息
 	sql='select id,content from user_notice where status=0 and userid=%s' % user_id  
 	res=sql_query(sql)
 	if res:
 		for r in res:
-			send_msg(conn,r[1])
+			all_msg_list.append(r[1])	
+			#send_msg(conn,r[1])
 			sql='update user_notice set status=1 where id=%s' % r[0]
 			sql_dml(sql)
+	
+	for msg in sorted(all_msg_list):
+		send_msg(conn,msg)
 	
 	#是否收到加好友消息
 	sql='select id,userid from user_req where add_userid=%s and status=0' % user_id 
@@ -1218,7 +1227,7 @@ def user_nospkuser(conn,args):
 	else:
 		is_forbidden_speaking=res[0][1]
 		if is_forbidden_speaking:
-			send_msg(conn,u"[ %s ]\n【系统消息】用户 [ %s ]在群[ %s|ID:%s ]内已被禁言，无需再次操作！" % (to_username,groupname,groupid))
+			send_msg(conn,u"【系统消息】用户 [ %s ]在群[ %s|ID:%s ]内已被禁言，无需再次操作！" % (to_username,groupname,groupid))
 			return
 
 	###开始清理redis###
@@ -1233,9 +1242,9 @@ def user_nospkuser(conn,args):
 		notice_userid=r[0]
 		#判断是否被踢用户
 		if notice_userid == to_userid:
-			notice_content='[ %s ]\n【系统消息】您已被群[ %s|ID:%s ]的群主[ %s ]禁言！' % (groupname,groupid,own_username)
+			notice_content='[ %s ]\n【系统消息】您已被群[ %s|ID:%s ]的群主[ %s ]禁言！' % (time.strftime("%Y-%m-%d %X"),groupname,groupid,own_username)
 		else:
-			notice_content='[ %s ]\n【系统消息】用户[ %s ]已被群[ %s|ID:%s ]的群主[ %s ]禁言！' % (to_username,groupname,groupid,own_username)
+			notice_content='[ %s ]\n【系统消息】用户[ %s ]已被群[ %s|ID:%s ]的群主[ %s ]禁言！' % (time.strftime("%Y-%m-%d %X"),to_username,groupname,groupid,own_username)
 		#判断用户是否在线
 		if user_is_online(notice_userid):
 			notice_conn=get_userid_conn(notice_userid)
@@ -1288,7 +1297,7 @@ def user_spkuser(conn,args):
 	else:
 		is_forbidden_speaking=res[0][1]
 		if not is_forbidden_speaking:
-			send_msg(conn,u"[ %s ]\n【系统消息】用户 [ %s ]在群[ %s|ID:%s ]内未被禁言，无需此操作！" % (to_username,groupname,groupid))
+			send_msg(conn,u"【系统消息】用户 [ %s ]在群[ %s|ID:%s ]内未被禁言，无需此操作！" % (to_username,groupname,groupid))
 			return
 
 	###开始清理redis###
@@ -1303,9 +1312,9 @@ def user_spkuser(conn,args):
 		notice_userid=r[0]
 		#判断是否被踢用户
 		if notice_userid == to_userid:
-			notice_content='[ %s ]\n【系统消息】您已被群[ %s|ID:%s ]的群主[ %s ]取消禁言！' % (groupname,groupid,own_username)
+			notice_content='[ %s ]\n【系统消息】您已被群[ %s|ID:%s ]的群主[ %s ]取消禁言！' % (time.strftime("%Y-%m-%d %X"),groupname,groupid,own_username)
 		else:
-			notice_content='[ %s ]\n【系统消息】用户[ %s ]已被群[ %s|ID:%s ]的群主[ %s ]取消禁言！' % (to_username,groupname,groupid,own_username)
+			notice_content='[ %s ]\n【系统消息】用户[ %s ]已被群[ %s|ID:%s ]的群主[ %s ]取消禁言！' % (time.strftime("%Y-%m-%d %X"),to_username,groupname,groupid,own_username)
 		#判断用户是否在线
 		if user_is_online(notice_userid):
 			notice_conn=get_userid_conn(notice_userid)
@@ -1340,12 +1349,12 @@ def user_nospkgroup(conn,args):
 
 	#判断是否为群主,非群主不能操作
 	if req_userid != own_userid:
-		send_msg(conn,u'[ %s ]\n【系统消息】 您不是群[ %s|ID:%s ]的群主，无权禁言群！' % (groupname,groupid))
+		send_msg(conn,u'【系统消息】您不是群[ %s|ID:%s ]的群主，无权禁言群！' % (groupname,groupid))
 		return
 
 	#判断当前群是否被禁言
 	if is_group_forbidden_speaking:
-		send_msg(conn,u"[ %s ]\n【系统消息】群[ %s|ID:%s ]内已被禁言，无需再次操作！" % (groupname,groupid))
+		send_msg(conn,u"【系统消息】群[ %s|ID:%s ]内已被禁言，无需再次操作！" % (groupname,groupid))
 		return
 
 	###开始清理redis###
@@ -1358,7 +1367,7 @@ def user_nospkgroup(conn,args):
 	res=sql_query(sql)
 	for r in res:
 		notice_userid=r[0]
-		notice_content='[ %s ]\n【系统消息】群[ %s|ID:%s ]已被群主[ %s ]禁言！' % (groupname,groupid,own_username)
+		notice_content='[ %s ]\n【系统消息】群[ %s|ID:%s ]已被群主[ %s ]禁言！' % (time.strftime("%Y-%m-%d %X"),groupname,groupid,own_username)
 		#判断用户是否在线
 		if user_is_online(notice_userid):
 			notice_conn=get_userid_conn(notice_userid)
@@ -1411,7 +1420,7 @@ def user_spkgroup(conn,args):
 	res=sql_query(sql)
 	for r in res:
 		notice_userid=r[0]
-		notice_content='[ %s ]\n【系统消息】群[ %s|ID:%s ]已被群主[ %s ]取消禁言！' % (groupname,groupid,own_username)
+		notice_content='[ %s ]\n【系统消息】群[ %s|ID:%s ]已被群主[ %s ]取消禁言！' % (time.strftime("%Y-%m-%d %X"),groupname,groupid,own_username)
 		#判断用户是否在线
 		if user_is_online(notice_userid):
 			notice_conn=get_userid_conn(notice_userid)
