@@ -281,10 +281,10 @@ def push_messages(sock,userid):
 		send_data(sock,u'[ %s ]\n【系统消息】用户[ %s|ID:%s ]向你申请加入群[ %s|ID:%s ]\n同意：accept %s \n拒绝：reject %s' % (get_custom_time_string(),req_username,req_userid,groupname,groupid,req_id,req_id))
 
 def send_user_message(sock,args_list):
-	send_userid=get_userid_of_socket(sock)
 	if len(args_list)<2:
 		send_data(sock,u'[ %s ]【系统提示】发送消息的操作参数错误' % get_custom_time_string())
 		return	
+	send_userid=get_userid_of_socket(sock)
 	to_userid=args_list[0]
 	to_username=get_name_of_userid(to_userid)
 	message_content=' '.join(args_list[1:])
@@ -330,12 +330,9 @@ def send_user_message(sock,args_list):
 		r_redis.rpush(r_key,send_user_message) 
 	send_data(sock,send_user_message)
 
-def send_group_message(sock,args):
-	send_userid=get_userid_of_socket(sock)
-	send_username=get_name_of_userid(send_userid)
-	args_list=args
+def send_group_message(sock,args_list):
 	if len(args_list)<2:
-		send_data(sock,u'【系统提示】发群消息的操作参数错误')
+		send_data(sock,u'【系统提示】发送群消息的操作参数错误!')
 		return	
 	groupid=args_list[0]
 	message_content=' '.join(args_list[1:])
@@ -345,9 +342,8 @@ def send_group_message(sock,args):
 	r_key=KV_EXISTS_GROUPID % groupid 
 	if not r_redis.exists(r_key):
 		sql='select id,own_userid,name from `group` where id=%s' % groupid 
-		res=sql_query(sql)
-		if not res:
-			send_data(sock,"【系统提示】该群ID号[ %s ]不存在!" % groupid)
+		if not sql_query(sql):
+			send_data(sock,"【系统提示】群GID[ %s ]不存在!" % groupid)
 			return 
 		r_redis.set(r_key,"")
 
@@ -399,7 +395,7 @@ def send_group_message(sock,args):
 			r_redis.set(r_key,is_group_forbidden_speaking)
 
 		if int(is_group_forbidden_speaking):
-			send_data(sock,u'[ %s ]\n【系统消息】 群[ %s|ID:%s ]已被禁言!' % (get_custom_time_string(),group_name,groupid))
+			send_data(sock,u'[ %s ]\n【系统消息】 群[ %s|GID:%s ]已被禁言!' % (get_custom_time_string(),group_name,groupid))
 			return 
 
 		#是否当前用户被禁言
@@ -414,18 +410,18 @@ def send_group_message(sock,args):
 			r_redis.set(r_key,is_forbidden_speaking)
 
 		if int(is_forbidden_speaking):
-			send_data(sock,u'[ %s ]\n【系统消息】 您已被群[ %s|ID:%s ]的群主禁言!' % (get_custom_time_string(),group_name,groupid))
+			send_data(sock,u'[ %s ]\n【系统消息】 您已被群[ %s|GID:%s ]的群主禁言!' % (get_custom_time_string(),group_name,groupid))
 			return 
 
 	#获取群用户，发送群消息
-	#清空列表
-	send_time=get_custom_time_string()
-	gmsg_content='[ %s ]\n【群消息】[ %s|ID:%s ][ %s ]:%s' % (send_time,group_name,groupid,send_username,content)
-	userid_list=[]
+	send_userid=get_userid_of_socket(sock)
+	send_username=get_name_of_userid(send_userid)
+	group_message_content='[ %s ]\n【群消息】[ %s|GID:%s ][ %s|UID:%s ]:%s' % (get_custom_time_string(),group_name,groupid,send_username,send_userid,message_content)
+	userids_list=[]
 	r_key=LIST_USERIDS_OF_GROUPID % groupid
 	if r_redis.llen(r_key):
 		for uid in r_redis.lrange(r_key,0,-1):
-			userid_list.append(int(uid.decode('utf-8')))
+			userids_list.append(int(uid.decode('utf-8')))
 	else:
 		sql='select userid from group_users where groupid=%s' % groupid
 		res=sql_query(sql)
@@ -435,21 +431,16 @@ def send_group_message(sock,args):
 			#写入redis
 			r_redis.rpush(r_key,to_userid)
 		
-	for to_userid in userid_list:
-		#判断是否是本人发送
-		if to_userid == send_userid:
-			send_data(sock,u'[ %s ]\n【发送群消息】[ %s|ID:%s ]:%s' % (send_time,group_name,groupid,content))
-			continue
-			
+	for to_userid in userids_list:
 		#判断用户是否在线
 		if userid_is_online(to_userid):
 			to_sock=get_socket_of_userid(to_userid)
-			send_data(to_sock,gmsg_content)
+			send_data(to_sock,group_message_content)
 		else:
 			r_key=LIST_GROUPMESSAGES_OF_USERID_IN_GROUPID % (groupid,to_userid)
-			r_redis.rpush(r_key,gmsg_content)
+			r_redis.rpush(r_key,group_message_content)
 
-def user_adduser(conn,args):
+def add_friend(conn,args):
 	userid=get_userid_of_socket(conn)	
 	req_username=get_name_of_userid(userid)
 	args_list=args
@@ -495,7 +486,7 @@ def user_adduser(conn,args):
 		send_data(to_conn,u"[ %s ]【系统消息】用户%s向您申请添加好友请求!\n同意：\naccept %s \n拒绝：\nreject %s" % (get_custom_time_string(),req_username,req_id,req_id))
 	send_data(conn,u'[ %s ]【系统消息】已向该用户%s发送添加好友申请' % (get_custom_time_string(),to_username))
 
-def user_deluser(conn,args):
+def delete_friend(conn,args):
 	userid=get_userid_of_socket(conn)	
 	req_username=get_name_of_userid(userid)
 	args_list=args
@@ -544,7 +535,7 @@ def user_deluser(conn,args):
 		sql_dml(notice_sql)
 	
 
-def user_entergroup(conn,args):
+def enter_group(conn,args):
 	req_userid=get_userid_of_socket(conn)
 	#判断参数是否正确
 	args_list=args
@@ -595,7 +586,7 @@ def user_entergroup(conn,args):
 
 
 
-def user_exitgroup(conn,args):
+def exit_group(conn,args):
 	req_userid=get_userid_of_socket(conn)
 	req_username=get_name_of_userid(req_userid)
 	#判断参数是否正确
@@ -651,7 +642,7 @@ def user_exitgroup(conn,args):
 		sql_dml(notice_sql)
 	
 
-def user_accept(conn,args):
+def accept_request(conn,args):
 	cur_userid=get_userid_of_socket(conn)
 	args_list=args
 	if len(args_list)!=1:
@@ -725,7 +716,7 @@ def user_accept(conn,args):
 	sql='update user_req set status=1 where id=%s' % req_id
 	sql_dml(sql)
 
-def user_reject(conn,args):
+def reject_requset(conn,args):
 	cur_userid=get_userid_of_socket(conn)
 	args_list=args
 	if len(args_list)!=1:
@@ -786,7 +777,7 @@ def user_reject(conn,args):
 	sql_dml(sql)
 		
 
-def user_listfriends(conn,args):
+def list_friends(conn,args):
 	userid=get_userid_of_socket(conn)
 	sql='select u.id,u.username from user_users uu join user u on uu.friend_userid=u.id  where uu.userid=%s' % userid
 	res=sql_query(sql)
@@ -807,7 +798,7 @@ def user_listfriends(conn,args):
 		firends_info_msg=u'当前好友:\n%s' % '\n'.join(friends)
 	send_data(conn,firends_info_msg)
 
-def user_listgroups(conn,args):
+def list_groups(conn,args):
 	own_userid=get_userid_of_socket(conn)
 	args_list=args
 	if len(args_list)!=0:
@@ -834,7 +825,7 @@ def user_listgroups(conn,args):
 			add_groups.append('- 群名：'+r[1]+'|群ID号：'+str(r[0]))
 	send_data(conn,"您拥有的群:\n%s\n您加入的群:\n%s\n" % ('\n'.join(own_groups),'\n'.join(add_groups)))
 
-def user_listallgroup(conn,args):
+def list_all_groups(conn,args):
 	own_userid=get_userid_of_socket(conn)
 	args_list=args
 	if len(args_list)!=0:
@@ -866,7 +857,7 @@ def user_listallgroup(conn,args):
 
 	send_data(conn,"当前系统的群:\n%s" % '\n'.join(groups))
 
-def user_listgroupusers(conn,args):
+def list_group_users(conn,args):
 	req_userid=get_userid_of_socket(conn)
 	args_list=args
 	if len(args_list)!=1:
@@ -914,7 +905,7 @@ def user_listgroupusers(conn,args):
 		send_data(conn,'群[ %s|ID:%s ]成员信息\n%s' %(group_name,groupid,'\n'.join(mem_list)))
 		
 
-def user_creategroup(conn,args):
+def create_group(conn,args):
 	own_userid=get_userid_of_socket(conn)
 	args_list=args
 	if len(args_list)!=1:
@@ -963,7 +954,7 @@ def user_creategroup(conn,args):
 	else:
 		send_data(conn,u'[ %s ]【系统消息】群[ %s ]已经创建失败!' % (get_custom_time_string(),group_name))
 
-def user_kickout(conn,args):
+def kickout_group_user(conn,args):
 	req_userid=get_userid_of_socket(conn)
 	args_list=args
 	if len(args_list)!=2:
@@ -1031,7 +1022,7 @@ def user_kickout(conn,args):
 	sql='delete from group_users where groupid=%s and userid=%s' % (groupid,to_userid)
 	sql_dml(sql)
 
-def user_delgroup(conn,args):
+def delete_group(conn,args):
 	req_userid=get_userid_of_socket(conn)
 	args_list=args
 	if len(args_list)!=1:
@@ -1106,7 +1097,7 @@ def user_delgroup(conn,args):
 	
 	send_data(conn,'[ %s ]\n【系统消息】 群[ %s|ID:%s ]已解散!' % (get_custom_time_string(),group_name,groupid))
 
-def user_nospkuser(conn,args):
+def no_speak_group_user(conn,args):
 	req_userid=get_userid_of_socket(conn)
 	args_list=args
 	if len(args_list)!=2:
@@ -1176,7 +1167,7 @@ def user_nospkuser(conn,args):
 	sql='update group_users set is_forbidden_speaking=1 where groupid=%s and userid=%s' % (groupid,to_userid)
 	sql_dml(sql)
 
-def user_spkuser(conn,args):
+def speak_user(conn,args):
 	req_userid=get_userid_of_socket(conn)
 	args_list=args
 	if len(args_list)!=2:
@@ -1246,7 +1237,7 @@ def user_spkuser(conn,args):
 	sql='update group_users set is_forbidden_speaking=0 where groupid=%s and userid=%s' % (groupid,to_userid)
 	sql_dml(sql)
 
-def user_nospkgroup(conn,args):
+def no_speak_group(conn,args):
 	req_userid=get_userid_of_socket(conn)
 	args_list=args
 	if len(args_list)!=1:
@@ -1299,7 +1290,7 @@ def user_nospkgroup(conn,args):
 	sql='update `group` set is_group_forbidden_speaking=1 where id=%s' % groupid
 	sql_dml(sql)
 
-def user_spkgroup(conn,args):
+def speak_group(conn,args):
 	req_userid=get_userid_of_socket(conn)
 	args_list=args
 	if len(args_list)!=1:
@@ -1605,41 +1596,40 @@ def handle_epollout(fd,c_sock):
 				'm': send_user_message,
 				'gmsg': send_group_message,
 				'gm': send_group_message,
-				'adduser': user_adduser,
-				'au': user_adduser,
-				'deluser': user_deluser,
-				'du': user_deluser,
-				'entergroup': user_entergroup,
-				'eng': user_entergroup,
-				'exitgroup': user_exitgroup,
-				'exg': user_exitgroup,
-				'kickout': user_kickout,
-				'ko': user_kickout,
-				'reject': user_reject,
-				'reject': user_reject,
-				'rj': user_reject,
-				'accept': user_accept,
-				'ac': user_accept,
-				'listfriends': user_listfriends,
-				'lf': user_listfriends,
-				'listgroups': user_listgroups,
-				'lg': user_listgroups,
-				'listallgroup': user_listallgroup,
-				'lag': user_listallgroup,
-				'listgroupusers': user_listgroupusers,
-				'lgu': user_listgroupusers,
-				'creategroup': user_creategroup,
-				'cg': user_creategroup,
-				'delgroup': user_delgroup,
-				'dg': user_delgroup,
-				'nospkgroup': user_nospkgroup,
-				'nsg': user_nospkgroup,
-				'spkgroup': user_spkgroup,
-				'sg': user_spkgroup,
-				'nospkuser': user_nospkuser,
-				'nsu': user_nospkuser,
-				'spkuser': user_spkuser,
-				'su': user_spkuser
+				'addfriend': add_friend,
+				'af': add_friend,
+				'delfriend': delete_friend,
+				'df': delete_friend,
+				'entergroup': enter_group,
+				'eng': enter_group,
+				'exitgroup': exit_group,
+				'exg': exit_group,
+				'kickout': kickout_group_user,
+				'ko': kickout_group_user,
+				'reject': reject_requset,
+				'rj': reject_requset,
+				'accept': accept_request,
+				'ac': accept_request,
+				'listfriends': list_friends,
+				'lf': list_friends,
+				'listgroups': list_groups,
+				'lg': list_groups,
+				'listallgroup': list_all_groups,
+				'lag': list_all_groups,
+				'listgroupusers': list_group_users,
+				'lgu': list_group_users,
+				'creategroup': create_group,
+				'cg': create_group,
+				'delgroup': delete_group,
+				'dg': delete_group,
+				'nospkgroup': no_speak_group,
+				'nsg': no_speak_group,
+				'spkgroup': speak_group,
+				'sg': speak_group,
+				'nospkuser': no_speak_group_user,
+				'nsu': no_speak_group_user,
+				'spkuser': speak_user,
+				'su': speak_user
 			}
 			switch[cmd](c_sock,args)
 		try:
