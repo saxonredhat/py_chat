@@ -27,6 +27,7 @@ db_config={
 
 #redis配置
 r_redis=redis.Redis(host='localhost',port=6379,db=0)
+
 #redis键值模板
 KV_EXISTS_GROUPID=u'kv_exists_groupid:groupid:%s'
 KV_NOSPEAKING_GROUPID=u'kv_nospeaking_groupid:groupid:%s'
@@ -54,12 +55,12 @@ except:
 	port=6900
 
 #无参数命令
-noargs_cmd=['listfriends','lf','listgroup','lg','listallgroup','lag','close','logout']
+noargs_cmd=['listfriends','lf','listgroups','lg','listallgroup','lag','close','logout']
 
-#参数命令
+#带参数命令
 args_cmd=['msg','m','gmsg','gm','adduser','au','deluser','du','entergroup','eng','exitgroup','exg','kickout','ko','reject','rj','accept','ac','creategroup','cg','delgroup','dg','listgroupusers','lgu','auth','echo','nospkuser','nsu','spkuser','su','nospkgroup','nsg','spkgroup','sg']
 
-#命令帮助
+#命令帮助提示
 cmd_help="""
 	 ===============================================
 	|                                               |
@@ -93,29 +94,30 @@ cmd_help="""
 	|命令                (说明)                     |
 	 ===============================================
 	|listfriends/lf      (列出好友)                 |
-	|listgroup/lg        (列出创建的群|列出加入的群)|
+	|listusers/lu        (列出系统所有用户)         |
+	|listgroups/lg       (列出创建的群|列出加入的群)|
 	|listallgroup/lag    (列出系统所有的群)         |
 	|logout              (退出)                     |
 	|close               (关闭对话)                 |
 	 ===============================================
 """
 
-#活动的客户端socket列表
+#userid对应客户端socket字典
 userid_to_socket={}
 
-#登陆成功并且没退出的socket列表
+#认证成功文件描述符对应socket字典
 auth_fd_to_socket={}
 
-#在线socket列表
+#文件描述符对应socket的字典
 fd_to_socket={}
 
-#命令统计
-fd_to_command_count={}
+#文件描述符对应命令统计次数的字典
+fd_to_cmd_count={}
 
-#消息字段队列
-message_queue={}
+#文件描述对应消息队列的字典
+fd_to_message_queue={}
 
-#创建epoll
+#创建epoll对象
 epoll=select.epoll()
 
 
@@ -144,11 +146,11 @@ def sql_query(sql):
 	cursor=db.cursor()
 	results=''
 	try:
-		print(u'[ %s ] 数据执行查询操作! %s' % (time.strftime("%Y-%m-%d %X"),sql))	
+		print(u'[ %s ] 执行查询操作! %s' % (time.strftime("%Y-%m-%d %X"),sql))	
 		cursor.execute(sql)
 		results=cursor.fetchall()
 	except Exception as e:
-		print(u'[ %s ] 数据执行查询异常! %s' % (time.strftime("%Y-%m-%d %X"),e))	
+		print(u'[ %s ] 执行查询发生异常! %s' % (time.strftime("%Y-%m-%d %X"),e))	
 	finally:
 		cursor.close()
 		db.close()
@@ -158,12 +160,12 @@ def sql_dml(sql):
 	db=pymysql.connect(**db_config)
 	cursor=db.cursor()
 	try:
-		print(u'[ %s ] 数据执行DML操作! %s' % (time.strftime("%Y-%m-%d %X"),sql))	
+		print(u'[ %s ] 执行DML操作! %s' % (time.strftime("%Y-%m-%d %X"),sql))	
 		cursor.execute(sql)	
 		db.commit()
 		return True
 	except Exception as e:
-		print(u'[ %s ] 数据库执行DML操作异常！%s,进行回滚操作！' % (time.strftime("%Y-%m-%d %X"),e))
+		print(u'[ %s ] 执行DML操作异常！%s,进行回滚操作！' % (time.strftime("%Y-%m-%d %X"),e))
 		db.rollback()
 		return False
 	finally:
@@ -435,12 +437,12 @@ def user_gmsg(conn,args):
 	#读取redis	
 	r_key=KV_GROUPID_GET_OWN_USERID % groupid
 	if r_redis.exists(r_key) and r_redis.get(r_key):
-		own_userid=r_redis.get(r_key).decode('utf-8')
+		own_userid=int(r_redis.get(r_key).decode('utf-8'))
 	else:
 		sql='select own_userid from `group` where id=%s' % groupid
 		res=sql_query(sql)
 		if res:
-			own_userid=res[0][0]
+			own_userid=int(res[0][0])
 			r_redis.set(r_key,own_userid)
 
 	#读取redis	
@@ -467,7 +469,7 @@ def user_gmsg(conn,args):
 
 	#判断是否是群主，非群主判断是否群禁言,判断是否用户被禁言
 	if req_userid != own_userid:
-		#是否群禁言
+		#是否当前群禁言
 		#读取redis
 		r_key=KV_NOSPEAKING_GROUPID % groupid
 		if r_redis.exists(r_key):
@@ -482,7 +484,7 @@ def user_gmsg(conn,args):
 			send_msg(conn,u'[ %s ]\n【系统消息】 群[ %s|ID:%s ]已被禁言！' % (time.strftime("%Y-%m-%d %X"),group_name,groupid))
 			return 
 
-		#是否用户被禁言
+		#是否当前用户被禁言
 		#读取redis
 		r_key=KV_NOSPEAKING_USERID_IN_GROUPID % (groupid,req_userid)
 		if r_redis.exists(r_key):
@@ -887,7 +889,7 @@ def user_listfriends(conn,args):
 		firends_info_msg=u'当前好友:\n%s' % '\n'.join(friends)
 	send_msg(conn,firends_info_msg)
 
-def user_listgroup(conn,args):
+def user_listgroups(conn,args):
 	own_userid=get_conn_userid(conn)
 	args_list=args
 	if len(args_list)!=0:
@@ -1183,8 +1185,6 @@ def user_delgroup(conn,args):
 	sql='delete from `group` where id=%s ' % groupid 
 	sql_dml(sql)
 	
-	#更新redis
-
 	send_msg(conn,'[ %s ]\n【系统消息】 群[ %s|ID:%s ]已解散！' % (time.strftime("%Y-%m-%d %X"),group_name,groupid))
 
 def user_nospkuser(conn,args):
@@ -1438,11 +1438,11 @@ def close_clear_all(conn,fd):
 	try:
 		epoll.unregister(fd)
 		#从命令统计列表删除
-		del fd_to_command_count[fd]
+		del fd_to_cmd_count[fd]
 		#从在线userid2sock删除
 		del_online_sock(conn)
 		#从queue队列中删除
-		del message_queue[fd]
+		del fd_to_message_queue[fd]
 		#从在线fd2sock字典删除
 		if fd in auth_fd_to_socket.keys():
 			del auth_fd_to_socket[fd] 
@@ -1464,7 +1464,7 @@ def handle_epollin(fd,c_sock):
 		except:
 			print(u'[ %s ] 获取客户端数据异常' % time.strftime("%Y-%m-%d %X"))
 			err_msg=u'echo 数据包异常'
-			message_queue[fd].put(err_msg)
+			fd_to_message_queue[fd].put(err_msg)
 			#获取客户端数据异常，猜测客户端非正常关闭
 			epoll.modify(fd,0)
 			try:
@@ -1477,7 +1477,7 @@ def handle_epollin(fd,c_sock):
 		if len(data)!=length:
 			print(u'[ %s ] 客户端数据包长度异常' % time.strftime("%Y-%m-%d %X"))
 			err_msg=u'echo 数据包长度异常'
-			message_queue[fd].put(err_msg)
+			fd_to_message_queue[fd].put(err_msg)
 			return
 
 		#判断命令是否为auth,是，则进行认证，否则跳转到EPOLLOUT
@@ -1502,7 +1502,7 @@ def handle_epollin(fd,c_sock):
 
 				if userid < 0:
 					login_err_msg=u'echo 用户名不存在！'
-					message_queue[fd].put(login_err_msg)
+					fd_to_message_queue[fd].put(login_err_msg)
 					try:
 						epoll.modify(fd,select.EPOLLOUT)	
 					except:
@@ -1520,7 +1520,7 @@ def handle_epollin(fd,c_sock):
 						user_conn=get_userid_conn(userid)
 						#对用户发送sock请求
 						logout_msg=u'echo 该账号在其他地方登录，您被迫已下线！'
-						message_queue[user_conn.fileno()].put(logout_msg)
+						fd_to_message_queue[user_conn.fileno()].put(logout_msg)
 						try:
 							epoll.modify(user_conn.fileno(),select.EPOLLOUT)	
 							#清除认证用户列表
@@ -1541,9 +1541,9 @@ def handle_epollin(fd,c_sock):
 					auth_fd_to_socket[fd]=c_sock
 					#提示登录成功的信息
 					#加入用户sock2command_count
-					fd_to_command_count[fd]=0
+					fd_to_cmd_count[fd]=0
 					login_ok=u'echo 登录成功!'
-					message_queue[fd].put(login_ok)
+					fd_to_message_queue[fd].put(login_ok)
 					try:
 						print("[ %s ]开始修改epollout!" % time.ctime())
 						epoll.modify(fd,select.EPOLLOUT)	
@@ -1553,7 +1553,7 @@ def handle_epollin(fd,c_sock):
 					return
 				else:
 					login_fail=u'echo 登录失败，密码错误！'
-					message_queue[fd].put(login_fail)
+					fd_to_message_queue[fd].put(login_fail)
 					try:
 						epoll.modify(fd,select.EPOLLOUT)	
 					except:
@@ -1578,7 +1578,7 @@ def handle_epollin(fd,c_sock):
 		except:
 			print(u'[ %s ] 获取客户端数据异常' % time.strftime("%Y-%m-%d %X"))
 			err_msg=u'echo 数据包异常'
-			message_queue[fd].put(err_msg)
+			fd_to_message_queue[fd].put(err_msg)
 			epoll.modify(fd,0)
 			fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 			return
@@ -1586,7 +1586,7 @@ def handle_epollin(fd,c_sock):
 		if len(data)!=length:
 			print(u'[ %s ] 客户端数据包长度异常' % time.strftime("%Y-%m-%d %X"))
 			err_msg=u'echo 数据包异常'
-			message_queue[fd].put(err_msg)
+			fd_to_message_queue[fd].put(err_msg)
 			try:
 				epoll.modify(fd,select.EPOLLHUP)
 			except:
@@ -1595,7 +1595,7 @@ def handle_epollin(fd,c_sock):
 			return
 		
 		#把数据存入队列
-		message_queue[fd].put(data.decode('utf-8'))
+		fd_to_message_queue[fd].put(data.decode('utf-8'))
 		try:
 			epoll.modify(fd,select.EPOLLOUT)	
 		except:
@@ -1608,7 +1608,7 @@ def handle_epollout(fd,c_sock):
 	if fd not in auth_fd_to_socket.keys():
 		#获取队列中的内容
 		try:
-			message=message_queue[fd].get_nowait()
+			message=fd_to_message_queue[fd].get_nowait()
 			cmd=message.split(' ')[0]
 			#判断是否是服务器的信息
 			if cmd == 'echo':
@@ -1633,14 +1633,14 @@ def handle_epollout(fd,c_sock):
 	#如果已经登录则推送，获取队列中的内容，判断消息的类别，调用不同的函数处理
 	else:
 		#推送消息
-		if fd_to_command_count[fd]==0:
+		if fd_to_cmd_count[fd]==0:
 			push_userid=get_conn_userid(c_sock)
 			if push_userid:
 				push_new_msg(c_sock,push_userid)
-		fd_to_command_count[fd]+=1
+		fd_to_cmd_count[fd]+=1
 		#获取队列中的内容
 		try:
-			message=message_queue[fd].get_nowait()
+			message=fd_to_message_queue[fd].get_nowait()
 		except queue.Empty:
 			try:
 				epoll.modify(fd,select.EPOLLIN)
@@ -1669,7 +1669,7 @@ def handle_epollout(fd,c_sock):
 			#清除认证用户列表
 			del_online_sock(c_sock)
 			#重置执行命令的列表
-			fd_to_command_count[fd]=0
+			fd_to_cmd_count[fd]=0
 			#清除登录列表的记录
 			if fd in auth_fd_to_socket.keys():
 				del auth_fd_to_socket[fd]
@@ -1703,8 +1703,8 @@ def handle_epollout(fd,c_sock):
 				'ac': user_accept,
 				'listfriends': user_listfriends,
 				'lf': user_listfriends,
-				'listgroup': user_listgroup,
-				'lg': user_listgroup,
+				'listgroups': user_listgroups,
+				'lg': user_listgroups,
 				'listallgroup': user_listallgroup,
 				'lag': user_listallgroup,
 				'listgroupusers': user_listgroupusers,
@@ -1871,7 +1871,7 @@ def start_chat_server():
 							continue
 						#添加到fd_to_socket字典表中
 						fd_to_socket[c_fd]=new_conn
-						message_queue[c_fd]=queue.Queue()
+						fd_to_message_queue[c_fd]=queue.Queue()
 					#读事件
 					elif event & select.EPOLLIN:
 						#条用epollin处理函数
