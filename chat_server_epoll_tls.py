@@ -52,7 +52,7 @@ host='0.0.0.0'
 try:
 	port=int(sys.argv[1])
 except:
-	port=6900
+	port=8888
 
 #无参数命令
 noargs_cmd=['listfriends','lf','listgroups','lg','listallgroup','lag','close','logout']
@@ -574,7 +574,7 @@ def user_adduser(conn,args):
 		if not res:
 			return
 		req_id=res[0][0]
-		send_msg(to_conn,u"[ %s ]【系统消息】用户%s向您申请添加好友请求!\n同意：\naccept %s \n拒绝：\nreject %s" % (time.strftime("%Y-%m-%d %X"),req_username,req_id,req_id,req_id))
+		send_msg(to_conn,u"[ %s ]【系统消息】用户%s向您申请添加好友请求!\n同意：\naccept %s \n拒绝：\nreject %s" % (time.strftime("%Y-%m-%d %X"),req_username,req_id,req_id))
 	send_msg(conn,u'[ %s ]【系统消息】已向该用户%s发送添加好友申请' % (time.strftime("%Y-%m-%d %X"),to_username))
 
 def user_deluser(conn,args):
@@ -673,7 +673,7 @@ def user_entergroup(conn,args):
 	#判断群主是否在在线，在线直接发送加群提醒，如果不在线，群主通过user_req可以看到加群消息	
 	if user_is_online(own_userid):
 		own_conn=get_userid_conn(own_userid)
-		send_msg(own_conn,u'[ %s ]【系统消息】用户[ %s ]申请加入群[ %s|ID:%s ]\n同意：\naccept %s \n拒绝：\nreject %s' % (time.strftime("%Y-%m-%d %X"),req_username,group_name,groupid,req_id,req_id,req_id))
+		send_msg(own_conn,u'[ %s ]【系统消息】用户[ %s ]申请加入群[ %s|ID:%s ]\n同意：\naccept %s \n拒绝：\nreject %s' % (time.strftime("%Y-%m-%d %X"),req_username,group_name,groupid,req_id,req_id))
 
 
 
@@ -700,7 +700,7 @@ def user_exitgroup(conn,args):
 	sql='select g.id,g.name from `group` g left join group_users gu on gu.groupid=g.id where g.id=%s and (g.own_userid=%s or gu.userid=%s)' % (groupid,req_userid,req_userid)
 	res=sql_query(sql)
 	if not res:
-		send_msg(conn,u'【系统提示】您不在群[ %s|ID:%s ]中,无需退出！'% (res[0][1],res[0][0]))
+		send_msg(conn,u'【系统提示】您不在群[ %s|ID:%s ]中,无需退出！'% (group_name,groupid))
 		return
 
 	#判断是否为群主,群主无法退群
@@ -764,7 +764,7 @@ def user_accept(conn,args):
 
 		#消息提醒内容
 		notice_content=u'[ %s ]\n【系统消息】用户%s已经同意添加您为好友!' % (time.strftime("%Y-%m-%d %X"),user_userid_name(add_userid))
-		send_msg(conn,u'[ %s ]\n【系统消息】您已同意添加%s为好友' % user_userid_name(add_userid))
+		send_msg(conn,u'[ %s ]\n【系统消息】您已同意添加%s为好友' % (time.strftime("%Y-%m-%d %X"),user_userid_name(add_userid)))
 
 	#加群
 	if add_groupid:
@@ -793,7 +793,7 @@ def user_accept(conn,args):
 			group_own_userid=res[0][2]	
 			#消息提醒内容
 			notice_content=u"[ %s ]\n【系统消息】[群主:%s]已经同意你加入群[ %s|ID:%s ]！" % (time.strftime("%Y-%m-%d %X"),user_userid_name(group_own_userid),group_name,groupid)
-			send_msg(conn,u'[ %s ]\n【系统消息】您已同意用户[ %s ]加入群[ %s|ID:%s ]！' %(user_userid_name(req_userid),group_name,groupid) )
+			send_msg(conn,u'[ %s ]\n【系统消息】您已同意用户[ %s ]加入群[ %s|ID:%s ]！' %(time.strftime("%Y-%m-%d %X"),user_userid_name(req_userid),group_name,groupid) )
 
 	#判断该请求的用户是否在线，如果在线直接提醒用户，不在线插入提醒信息到数据库
 	if user_is_online(req_userid):
@@ -830,7 +830,7 @@ def user_reject(conn,args):
 			send_msg(conn,u'【系统提示】您无权执行该操作！')
 			return 1
 		notice_content=u'[ %s ]\n【系统消息】用户%s已经婉拒了您添加好友的请求！' % (time.strftime("%Y-%m-%d %X"),user_userid_name(add_userid))
-		send_msg(conn,u'[ %s ]\n【系统消息】您已拒绝用户%s的添加好友申请' % user_userid_name(add_userid))
+		send_msg(conn,u'[ %s ]\n【系统消息】您已拒绝用户%s的添加好友申请' % (time.strftime("%Y-%m-%d %X"),user_userid_name(add_userid)))
 
 	#如果是添加群
 	if add_groupid:
@@ -1041,8 +1041,9 @@ def user_creategroup(conn,args):
 		#添加完成员把is_empty设置为1
 		sql='update `group` set is_empty=1 where id=%s' % groupid
 		sql_dml(sql)
-	
-	send_msg(conn,u'[ %s ]【系统消息】群[ %s ]已经创建完成！' % (time.strftime("%Y-%m-%d %X"),group_name))
+		send_msg(conn,u'[ %s ]【系统消息】群[ %s|GID:%s ]已经创建完成！' % (time.strftime("%Y-%m-%d %X"),group_name,groupid))
+	else:
+		send_msg(conn,u'[ %s ]【系统消息】群[ %s ]已经创建失败！' % (time.strftime("%Y-%m-%d %X"),group_name))
 
 def user_kickout(conn,args):
 	req_userid=get_conn_userid(conn)
