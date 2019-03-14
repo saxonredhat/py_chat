@@ -67,29 +67,29 @@ cmd_help="""
 	|                命令使用说明:                  |
 	|                                               |
 	 ===============================================
-	|命令          参数1    参数2   (说明)          | 
+	|命令          参数   参数     (说明)           | 
 	 ===============================================
-	|auth          用户名   密码    (登录系统)      |
-	|msg/m         用户名   消息    (给用户发送消息)|
-	|gmsg/gm       群ID     消息    (给群发送消息)  |
-	|kickout/ko    群ID     用户    (移出群用户)    |
-	|nospkuser/nsu 群ID     用户    (禁言群用户)    |
-	|spkuser/su    群ID     用户    (取消禁言群用户)|
+	|auth          UID    PASSWORd (登录系统)       |
+	|msg/m         UID    MESSAGE  (给用户发送消息) |
+	|gmsg/gm       GID    MESSAGE  (给群发送消息)   |
+	|kickout/ko    GID    UID      (移出群用户)     |
+	|nospkuser/nsu GID    UID      (禁言群用户)     |
+	|spkuser/su    GID    UID      (取消禁言群用户) |
 	 ===============================================
 	|命令                参数    (说明)             |
 	 ===============================================
-	|echo                消息    (回显消息)         |
-	|adduser/au          用户名  (添加好友)         |
-	|deluser/du          用户名  (删除好友)         |
-	|creategroup/cg      群名    (建群)             |
-	|delgroup/dg         群ID    (删群)             |
-	|entergroup/eng      群ID    (加群)             |
-	|exitgroup/exg       群ID    (退群)             |
-	|nospkgroup/nsg      群ID    (禁言群)           |
-	|spkgroup/sg         群ID    (取消禁言群)       |
-	|reject/rj           请求ID  (同意加好友|进群)  |
-	|accept/ac           请求ID  (拒绝加好友|进群)  |
-	|listgroupusers/lgu  群ID    (列出群成员信息)   |
+	|echo                MESSAGE (回显消息)         |
+	|adduser/au          UID     (添加好友)         |
+	|deluser/du          UID     (删除好友)         |
+	|creategroup/cg      GNAME   (建群)             |
+	|delgroup/dg         GID     (删群)             |
+	|entergroup/eng      GID     (加群)             |
+	|exitgroup/exg       GID     (退群)             |
+	|nospkgroup/nsg      GID     (禁言群)           |
+	|spkgroup/sg         GID     (取消禁言群)       |
+	|reject/rj           RID     (同意加好友|进群)  |
+	|accept/ac           RID     (拒绝加好友|进群)  |
+	|listgroupusers/lgu  GID     (列出群成员信息)   |
 	 ===============================================
 	|命令                (说明)                     |
 	 ===============================================
