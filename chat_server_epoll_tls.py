@@ -31,14 +31,14 @@ r_redis=redis.Redis(host='localhost',port=6379,db=0)
 #redis键值模板
 KV_EXISTS_GROUPID=u'kv_exists_groupid:groupid:%s'
 KV_EXISTS_USERID=u'kv_exists_userid:userid:%s'
-KV_NOSPEAKING_GROUPID=u'kv_nospeaking_groupid:groupid:%s'
-KV_NOSPEAKING_USERID_IN_GROUPID=u'kv_nospeaking_userid_in_groupid:groupid:%s:userid:%s'
 KV_GROUPID_GET_GROUPNAME=u'kv_groupid_get_groupname:groupid:%s'
 KV_GROUPID_GET_OWN_USERID=u'kv_groupid_get_own_userid:groupid:%s'
 KV_USERID_IN_GROUPID=u'kv_userid_in_groupid:userid:%s:groupid:%s'
 KV_OWNUSERID_OWN_GROUPID=u'kv_ownuserid_own_groupid:own_userid:%s:groupid:%s'
 KV_USERID_GET_USERNAME=u'kv_userid_get_username:userid:%s'
 KV_USERID_ISFRIEND_USERID=u'kv_userid_isfriend_userid:userid:%s:userid:%s'
+KV_IS_FORBIDDEN_SPEAKING_GROUPID=u'kv_is_forbidden_speaking_groupid:groupid:%s'
+KV_IS_FORBIDDEN_SPEAKING_USERID_IN_GROUPID=u'kv_is_forbidden_speaking_userid_in_groupid:groupid:%s:userid:%s'
 LIST_GROUPMESSAGES_OF_USERID_IN_GROUPID=u'list_groupmessages_of_userid_in_groupid:groupid:%s:userid:%s'
 LIST_USERIDS_OF_GROUPID=u'list_userids_of_groupid:groupid:%s'
 LIST_USERMESSAGES_OF_USERID=u'list_usermessages_of_userid:userid:%s'
@@ -297,7 +297,7 @@ def get_has_group_counts_of_userid(userid):
 	return sql_query(sql)
 
 def group_is_forbidden_speaking(groupid):
-	r_key=KV_NOSPEAKING_GROUPID % groupid
+	r_key=KV_IS_FORBIDDEN_SPEAKING_GROUPID % groupid
 	if not r_redis.exists(r_key):
 		sql='select is_group_forbidden_speaking from `group` where id=%s' % groupid
 		res=sql_query(sql)
@@ -311,7 +311,7 @@ def group_is_forbidden_speaking(groupid):
 	return False
 
 def user_is_forbidden_speaking_in_group(userid,groupid):
-	r_key=KV_NOSPEAKING_USERID_IN_GROUPID % (groupid,userid)
+	r_key=KV_IS_FORBIDDEN_SPEAKING_USERID_IN_GROUPID % (groupid,userid)
 	if not r_redis.exists(r_key):
 		sql='select is_forbidden_speaking from group_users where groupid=%s and userid=%s' % (groupid,userid)
 		res=sql_query(sql)
@@ -424,7 +424,7 @@ def send_user_message(sock,args_list):
 	to_username=get_username_of_userid(to_userid)
 
 	if not userid_is_exists(to_userid):
-		send_data(sock,u'[ %s ]【系统消息】 用户ID[ %s ]在系统中不存在' % (get_custom_time_string(),to_userid))
+		send_data(sock,u'[ %s ]【系统消息】 用户UID[ %s ]在系统中不存在' % (get_custom_time_string(),to_userid))
 		return
 
 	send_userid=get_userid_of_socket(sock)
@@ -868,7 +868,7 @@ def list_all_groups(sock,args_list):
 
 def list_group_users(sock,args_list):
 	if len(args_list)!=1:
-		send_data(sock,u'【系统提示】列出群成员的操作参数错误')
+		send_data(sock,u'【系统提示】列出群成员的操作参数错误!')
 		return	
 	groupid=args_list[0]
 
@@ -1067,6 +1067,7 @@ def no_speak_group_user(sock,args_list):
 	req_userid=get_userid_of_socket(sock)
 	groupid=args_list[0]
 	to_userid=args_list[1]
+	to_username=get_username_of_userid(to_userid)
 
 	#判断群是否存在
 	if not group_is_exists(groupid):
@@ -1081,18 +1082,14 @@ def no_speak_group_user(sock,args_list):
 		send_data(sock,u'[ %s ]\n【系统消息】 您不是群[ %s|GID:%s ]的群主，无权禁言用户!' % (groupname,groupid))
 		return
 
+	if not userid_is_exists(to_userid):
+		send_data(sock,u'[ %s ]【系统消息】 用户UID[ %s ]在系统中不存在' % (get_custom_time_string(),to_userid))
+		return
+
 	#判断当前用户是否在群内
 	if not userid_is_exists_in_group(to_userid):
 		send_data(sock,u"【系统提示】用户[ %s|UID:%s ]不在群[ %s|GID: ]内!" % (to_username,to_userid,groupname,groupid))
 		return
-
-	#判断用户是否存在
-	sql='select id from user where username="%s"' % to_username
-	res=sql_query(sql)
-	if not res:
-		send_data(sock,u"【系统提示】用户[ %s ]不存在!" % to_username)
-		return
-	to_userid=res[0][0]
 
 	#判断当前用户是否在群内,并且是否禁用
 	sql='select id,is_forbidden_speaking from group_users where groupid=%s and userid=%s' % (groupid,to_userid)
@@ -1107,7 +1104,7 @@ def no_speak_group_user(sock,args_list):
 			return
 
 	###开始清理redis###
-	r_key=KV_NOSPEAKING_USERID_IN_GROUPID % (groupid,to_userid)
+	r_key=KV_IS_FORBIDDEN_SPEAKING_USERID_IN_GROUPID % (groupid,to_userid)
 	r_redis.delete(r_key)
 	###结束清理redis###
 
@@ -1177,7 +1174,7 @@ def speak_user(sock,args_list):
 			return
 
 	###开始清理redis###
-	r_key=KV_NOSPEAKING_USERID_IN_GROUPID % (groupid,to_userid)
+	r_key=KV_IS_FORBIDDEN_SPEAKING_USERID_IN_GROUPID % (groupid,to_userid)
 	r_redis.delete(r_key)
 	###结束清理redis###
 
@@ -1234,7 +1231,7 @@ def no_speak_group(sock,args_list):
 		return
 
 	###开始清理redis###
-	r_key=KV_NOSPEAKING_GROUPID % groupid
+	r_key=KV_IS_FORBIDDEN_SPEAKING_GROUPID % groupid
 	r_redis.delete(r_key)
 	###结束清理redis###
 
@@ -1286,7 +1283,7 @@ def speak_group(sock,args_list):
 		return
 
 	###开始清理redis###
-	r_key=KV_NOSPEAKING_GROUPID % groupid
+	r_key=KV_IS_FORBIDDEN_SPEAKING_GROUPID % groupid
 	r_redis.delete(r_key)
 	###结束清理redis###
 
@@ -1630,7 +1627,7 @@ def load_data2redis():
 		r_key=LIST_USERIDS_OF_GROUPID % groupid
 		r_redis.rpush(r_key,userid)
 
-		r_key=KV_NOSPEAKING_USERID_IN_GROUPID % (groupid,userid)
+		r_key=KV_IS_FORBIDDEN_SPEAKING_USERID_IN_GROUPID % (groupid,userid)
 		r_redis.set(r_key,is_forbidden_speaking)
 
 	#查询所有群ID,是否禁用，所有群成员ID列表
@@ -1642,7 +1639,7 @@ def load_data2redis():
 		r_key=KV_EXISTS_GROUPID % gid
 		r_redis.set(r_key,"")
 		
-		r_key=KV_NOSPEAKING_GROUPID % gid
+		r_key=KV_IS_FORBIDDEN_SPEAKING_GROUPID % gid
 		r_redis.set(r_key,is_group_forbidden_speaking)
 		
 		sql='select userid from group_users where groupid=%s' % gid
