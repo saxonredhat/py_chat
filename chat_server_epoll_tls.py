@@ -79,6 +79,7 @@ cmd_help="""
 	|命令                参数    (说明)             |
 	 ===============================================
 	|echo                MESSAGE (回显消息)         |
+	|infome/im           MESSAGE (回显消息)         |
 	|adduser/au          UID     (添加好友)         |
 	|deluser/du          UID     (删除好友)         |
 	|creategroup/cg      GNAME   (建群)             |
@@ -90,9 +91,11 @@ cmd_help="""
 	|reject/rj           RID     (同意加好友|进群)  |
 	|accept/ac           RID     (拒绝加好友|进群)  |
 	|listgroupusers/lgu  GID     (列出群成员信息)   |
+	|infouser/iu         UID     (显示用户信息)     |
 	 ===============================================
 	|命令                (说明)                     |
 	 ===============================================
+	|infome/im           (显示当前用户信息)         |
 	|listfriends/lf      (列出好友)                 |
 	|listusers/lu        (列出系统所有用户)         |
 	|listgroups/lg       (列出创建的群|列出加入的群)|
@@ -330,25 +333,32 @@ def send_user_message(sock,args_list):
 		r_redis.rpush(r_key,send_user_message) 
 	send_data(sock,send_user_message)
 
-def send_group_message(sock,args_list):
-	if len(args_list)<2:
-		send_data(sock,u'【系统提示】发送群消息的操作参数错误!')
-		return	
-	groupid=args_list[0]
-	message_content=' '.join(args_list[1:])
+def userid_is_exists(userid):
 
-	#判断群是否存在
-	#读取redis	
-	r_key=KV_EXISTS_GROUPID % groupid 
+def groupid_is_exists(groupid):
+	#读取redis
+	r_key=KV_EXISTS_GROUPID % groupid
 	if not r_redis.exists(r_key):
-		sql='select id,own_userid,name from `group` where id=%s' % groupid 
+		sql='select id from `group` where id=%s' % groupid
 		if not sql_query(sql):
-			send_data(sock,"【系统提示】群GID[ %s ]不存在!" % groupid)
-			return 
-		r_redis.set(r_key,"")
+			return False
+	return True
 
-	#获取群主ID
-	#读取redis	
+def get_groupname_of_groupid(groupid):
+	r_key=KV_GROUPID_GET_GROUPNAME % groupid
+	if r_redis.exists(r_key) and r_redis.get(r_key):
+		groupname=r_redis.get(r_key).decode('utf-8')
+	else:
+		sql='select name from `group` where id=%s' % groupid
+		res=sql_query(sql)
+		if res:
+			groupname=res[0][0]
+			r_redis.set(r_key,groupname)	
+		else:
+			groupname=''
+	return groupname
+
+def get_own_userid_of_groupid(groupid):
 	r_key=KV_GROUPID_GET_OWN_USERID % groupid
 	if r_redis.exists(r_key) and r_redis.get(r_key):
 		own_userid=int(r_redis.get(r_key).decode('utf-8'))
@@ -358,21 +368,42 @@ def send_group_message(sock,args_list):
 		if res:
 			own_userid=int(res[0][0])
 			r_redis.set(r_key,own_userid)
+		else:
+			own_userid=-1
+	return own_userid
 
-	#读取redis	
-	r_key=KV_GROUPID_GET_GROUPNAME % groupid
-	if r_redis.exists(r_key) and r_redis.get(r_key):
-		group_name=r_redis.get(r_key).decode('utf-8')
-	else:
-		sql='select name from `group` where id=%s' % groupid
+def userid_is_exists_in_group(userid,groupid):
+	r_key=KV_USERID_IN_GROUPID % (userid,groupid)
+	if not r_redis.exists(r_key):
+		sql='select id from group_users where groupid=%s and userid=%s' % (groupid,userid)
 		res=sql_query(sql)
-		if res:
-			group_name=res[0][0]
-			r_redis.set(r_key,group_name)
+		if not res:
+			r_redis.set(r_key,"")
+			return False 
+	return True 
+
+def send_group_message(sock,args_list):
+	if len(args_list)<2:
+		send_data(sock,u'【系统提示】发送群消息的操作参数错误!')
+		return	
+	groupid=args_list[0]
+	message_content=' '.join(args_list[1:])
+
+	#判断群是否存在
+	if not groupid_is_exists(groupid):
+		send_data(sock,"【系统提示】群GID[ %s ]不存在!" % groupid)
+		return
+
+	#获取群主ID
+	own_userid=get_own_userid_of_groupid(groupid)
+	#获取群名
+	groupname=get_own_userid_of_groupid(groupid)
+
+	send_userid=get_userid_of_socket(sock)
 
 	#判断是否为群成员，非成员不能发送消息
+	if not userid_is_exists_in_group(send_userid,groupid):
 	#读取redis
-	r_key=KV_USERID_IN_GROUPID % (send_userid,groupid)
 	if not r_redis.exists(r_key):
 		sql='select id from group_users where groupid=%s and userid=%s' % (groupid,send_userid)
 		res=sql_query(sql)
@@ -440,51 +471,51 @@ def send_group_message(sock,args_list):
 			r_key=LIST_GROUPMESSAGES_OF_USERID_IN_GROUPID % (groupid,to_userid)
 			r_redis.rpush(r_key,group_message_content)
 
-def add_friend(conn,args):
-	userid=get_userid_of_socket(conn)	
-	req_username=get_name_of_userid(userid)
+def add_friend(sock,args_list):
 	args_list=args
 	if len(args_list)!=1:
-		send_data(conn,u'【系统提示】添加好友的命令错误')
+		send_data(sock,u'【系统提示】添加好友的命令错误!')
 		return
-	to_username=args_list[0]
+	req_userid=get_userid_of_socket(sock)
+	req_username=get_name_of_userid(userid)
+	to_userid=args_list[0]
 	#判断用户是否存在
 	sql='select id from user where username="%s"' % to_username
 	res=sql_query(sql)
 	if not res:
-		send_data(conn,u"【系统提示】系统不存在用户%s" % to_username)
+		send_data(sock,u"【系统提示】系统不存在用户%s" % to_username)
 		return
 	add_userid=res[0][0]
 
 	#判断是否添加的是自己
 	if userid == add_userid:
-		send_data(conn,u"【系统提示】不能添加自己为好友!")
+		send_data(sock,u"【系统提示】不能添加自己为好友!")
 		return 1 
 
 	#判断是否已经添加为好友,或者是否已经存在申请请求
 	sql='select id from user_users where userid=%s and friend_userid=%s' % (userid,add_userid)
 	res=sql_query(sql)
 	if res:
-		send_data(conn,u"【系统提示】您和用户%s已经是好友关系，不需要再次添加" % to_username)
+		send_data(sock,u"【系统提示】您和用户%s已经是好友关系，不需要再次添加" % to_username)
 		return
 	sql='select id from user_req where userid=%s and add_userid=%s and type=1 and status=0' % (userid,add_userid)
 	res=sql_query(sql)
 	if res:
-		send_data(conn,u"【系统提示】您已经向%s发送过好友申请，无需再次发送" % to_username)
+		send_data(sock,u"【系统提示】您已经向%s发送过好友申请，无需再次发送" % to_username)
 		return
 	
 	
-	to_conn=get_socket_of_userid(add_userid)
+	to_sock=get_socket_of_userid(add_userid)
 	sql='insert into user_req(userid,type,add_userid,status,created_at) values(%s,1,%s,0,now())' % (userid,add_userid)
 	sql_dml(sql)
-	if to_conn:
+	if to_sock:
 		sql='select id from user_req where userid=%s and add_userid=%s and status=0 LIMIT 1' %  (userid,add_userid)
 		res=sql_query(sql)
 		if not res:
 			return
 		req_id=res[0][0]
-		send_data(to_conn,u"[ %s ]【系统消息】用户%s向您申请添加好友请求!\n同意：\naccept %s \n拒绝：\nreject %s" % (get_custom_time_string(),req_username,req_id,req_id))
-	send_data(conn,u'[ %s ]【系统消息】已向该用户%s发送添加好友申请' % (get_custom_time_string(),to_username))
+		send_data(to_sock,u"[ %s ]【系统消息】用户%s向您申请添加好友请求!\n同意：\naccept %s \n拒绝：\nreject %s" % (get_custom_time_string(),req_username,req_id,req_id))
+	send_data(sock,u'[ %s ]【系统消息】已向该用户%s发送添加好友申请' % (get_custom_time_string(),to_username))
 
 def delete_friend(conn,args):
 	userid=get_userid_of_socket(conn)	
