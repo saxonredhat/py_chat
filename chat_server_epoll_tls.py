@@ -219,18 +219,22 @@ def userid_is_exists(userid):
 			return False
 	return True
 
-def user_is_friend_of_user(userid,userid):
-	r_key=KV_USERID_ISFRIEND_USERID % (send_userid,to_userid)
-	is_friend=r_redis.exists(r_key)
-	if not is_friend:
-		sql='select userid from user_users where userid=%s and friend_userid=%s' % (send_userid,to_userid)
+def user_is_friend_of_user(userid,userid2):
+	r_key=KV_USERID_ISFRIEND_USERID % (userid,userid2)
+	if not r_redis.exists(r_key):
+		sql='select userid from user_users where userid=%s and friend_userid=%s' % (userid,userid2)
 		res=sql_query(sql)
 		if not res:
-			send_data(sock,u'[ %s ]【系统消息】 用户[ %s|UID:%s ]不是您的好友,不能发送消息!' % (get_custom_time_string(),to_username,to_useridi))
-			return 
-		#写入redis
+			return False 
 		r_redis.set(r_key,"")
+	return True
 
+def user_is_exists_add_user_request(userid,userid2):
+	sql='select id from user_req where userid=%s and to_userid=%s and type=1 and status=0' % (userid,userid2)
+	if sql_query(sql):
+		return True
+	return False
+	
 
 def groupid_is_exists(groupid):
 	#读取redis
@@ -421,24 +425,17 @@ def send_user_message(sock,args_list):
 		return
 
 	#判断当前发送消息的接收方是否为好友，如果不是拒绝发送消息
-	r_key=KV_USERID_ISFRIEND_USERID % (send_userid,to_userid)
-	is_friend=r_redis.exists(r_key)
-	if not is_friend:
-		sql='select userid from user_users where userid=%s and friend_userid=%s' % (send_userid,to_userid)
-		res=sql_query(sql)
-		if not res:
-			send_data(sock,u'[ %s ]【系统消息】 用户[ %s|UID:%s ]不是您的好友,不能发送消息!' % (get_custom_time_string(),to_username,to_useridi))
-			return 
-		#写入redis
-		r_redis.set(r_key,"")
+	if user_is_friend_of_user(send_userid,to_userid):
+		send_data(sock,u'[ %s ]【系统消息】 用户[ %s|UID:%s ]不是您的好友,不能发送消息!' % (get_custom_time_string(),to_username,to_useridi))
+		return
 
 	to_sock=get_socket_of_userid(to_userid)
 	if to_sock:
 		send_data(to_sock,send_user_message)
 	else:
 		r_key=LIST_USERMESSAGES_OF_USERID % to_userid
-		r_redis.rpush(r_key,send_user_message) 
-	send_data(sock,send_user_message)
+		r_redis.rpush(r_key,user_message) 
+	send_data(sock,user_message)
 
 
 def send_group_message(sock,args_list):
@@ -468,17 +465,17 @@ def send_group_message(sock,args_list):
 	if send_userid != own_userid:
 		#是否当前群禁言
 		if group_is_forbidden_speaking(groupid):
-			send_data(sock,u'[ %s ]\n【系统消息】 群[ %s|GID:%s ]已被禁言!' % (get_custom_time_string(),groupname,groupid))
+			send_data(sock,u'【系统消息】 群[ %s|GID:%s ]已被禁言!' % (groupname,groupid))
 			return 
 
 		#是否当前用户被禁言
 		if user_is_forbidden_speaking_in_group(groupid,send_userid):
-			send_data(sock,u'[ %s ]\n【系统消息】 您已被群[ %s|GID:%s ]的群主禁言!' % (get_custom_time_string(),groupname,groupid))
+			send_data(sock,u'【系统消息】 您已被群[ %s|GID:%s ]的群主禁言!' % (groupname,groupid))
 			return 
 
 	#获取群用户，发送群消息
 	send_username=get_name_of_userid(send_userid)
-	group_message_content='[ %s ]\n【群消息】[ %s|GID:%s ][ %s|UID:%s ]:%s' % (get_custom_time_string(),groupname,groupid,send_username,send_userid,message_content)
+	group_message='[ %s ]\n【群消息】[ %s|GID:%s ][ %s|UID:%s ]:%s' % (get_custom_time_string(),groupname,groupid,send_username,send_userid,message_content)
 
 	#获取群用户，发送群消息
 	userids_list=get_userids_of_group(groupid)
@@ -486,10 +483,10 @@ def send_group_message(sock,args_list):
 		#判断用户是否在线
 		if user_is_online(to_userid):
 			to_sock=get_socket_of_userid(to_userid)
-			send_data(to_sock,group_message_content)
+			send_data(to_sock,group_message)
 		else:
 			r_key=LIST_GROUPMESSAGES_OF_USERID_IN_GROUPID % (groupid,to_userid)
-			r_redis.rpush(r_key,group_message_content)
+			r_redis.rpush(r_key,group_message)
 
 def add_friend(sock,args_list):
 	args_list=args
@@ -499,37 +496,32 @@ def add_friend(sock,args_list):
 	req_userid=get_userid_of_socket(sock)
 	req_username=get_name_of_userid(userid)
 	to_userid=args_list[0]
-	#判断用户是否存在
-	sql='select id from user where username="%s"' % to_username
-	res=sql_query(sql)
-	if not res:
-		send_data(sock,u"【系统提示】系统不存在用户%s" % to_username)
+
+	#判断userid是否存在
+	if userid_is_exists(to_userid):
+		send_data(sock,u"【系统提示】系统UID[ %s ]不存在!" % to_userid)
 		return
-	add_userid=res[0][0]
 
 	#判断是否添加的是自己
-	if userid == add_userid:
-		send_data(sock,u"【系统提示】不能添加自己为好友!")
-		return 1 
+	if req_userid == to_userid:
+		send_data(sock,u"【系统提示】无需添加自己为好友!")
+		return 
 
 	#判断是否已经添加为好友,或者是否已经存在申请请求
-	sql='select id from user_users where userid=%s and friend_userid=%s' % (userid,add_userid)
-	res=sql_query(sql)
-	if res:
+	if user_is_friend_of_user(req_userid,to_userid):
 		send_data(sock,u"【系统提示】您和用户%s已经是好友关系，不需要再次添加" % to_username)
 		return
-	sql='select id from user_req where userid=%s and add_userid=%s and type=1 and status=0' % (userid,add_userid)
-	res=sql_query(sql)
-	if res:
+
+
+	if user_is_exists_add_user_request(userid,to_userid):
 		send_data(sock,u"【系统提示】您已经向%s发送过好友申请，无需再次发送" % to_username)
 		return
 	
-	
-	to_sock=get_socket_of_userid(add_userid)
-	sql='insert into user_req(userid,type,add_userid,status,created_at) values(%s,1,%s,0,now())' % (userid,add_userid)
+	to_sock=get_socket_of_userid(to_userid)
+	sql='insert into user_req(userid,type,to_userid,status,created_at) values(%s,1,%s,0,now())' % (userid,to_userid)
 	sql_dml(sql)
 	if to_sock:
-		sql='select id from user_req where userid=%s and add_userid=%s and status=0 LIMIT 1' %  (userid,add_userid)
+		sql='select id from user_req where userid=%s and to_userid=%s and status=0 LIMIT 1' %  (userid,to_userid)
 		res=sql_query(sql)
 		if not res:
 			return
