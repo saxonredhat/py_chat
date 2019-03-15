@@ -1060,9 +1060,9 @@ def delete_group(sock,args_list):
 			sql_dml(notice_sql)
 	
 
-def no_speak_group_user(sock,args_list):
+def nospeak_group_user(sock,args_list,is_nospeak_group_user=1):
 	if len(args_list)!=2:
-		send_data(sock,u'【系统提示】禁言用户操作参数错误!')
+		send_data(sock,u'【系统提示】用户操作参数错误!')
 		return	
 	req_userid=get_userid_of_socket(sock)
 	groupid=args_list[0]
@@ -1092,78 +1092,19 @@ def no_speak_group_user(sock,args_list):
 		return
 
 	#判断当前用户是否在群内,并且是否禁用
-	if user_is_forbidden_speaking_in_group(userid,groupid):
+	if user_is_forbidden_speaking_in_group(userid,groupid) and is_nospeak_group_user==1:
 		send_data(sock,u"【系统消息】用户 [ %s|UID:%s ]在群[ %s|GID:%s ]内已被禁言，无需再次操作!" % (to_username,to_userid,groupname,groupid))
 		return
 
-	#禁言用户
-	sql='update group_users set is_forbidden_speaking=1 where groupid=%s and userid=%s' % (groupid,to_userid)
-	result=sql_dml(sql)
-	if not result:
-		send_data(sock,u"【系统提示】数据库发送异常，禁言用户失败!"
-		return
-
-	###开始清理redis###
-	r_key=KV_IS_FORBIDDEN_SPEAKING_USERID_IN_GROUPID % (groupid,to_userid)
-	r_redis.delete(r_key)
-	###结束清理redis###
-
-	#提醒群用户
-	for group_userid in get_userids_of_group(groupid):
-		if group_userid == to_userid:
-			notice_content='[ %s ]\n【系统消息】您已被群[ %s|GID:%s ]的群主[ %s|UID:%s ]禁言!' % (get_custom_time_string(),groupname,groupid,own_username,own_userid)
-		else:
-			notice_content='[ %s ]\n【系统消息】用户[ %s|UID:%s ]已被群[ %s|GID:%s ]的群主[ %s|UID:%s ]禁言!' % (get_custom_time_string(),to_username,to_userid,groupname,groupid,own_username,own_userid)
-		#判断用户是否在线
-		if user_is_online(group_userid):
-			notice_sock=get_socket_of_userid(group_userid)
-			send_data(notice_sock,notice_content)
-		else:
-			notice_sql='insert into user_notice(userid,content,status,created_at) values(%s,"%s",0,now())' % (group_userid,notice_content)
-			sql_dml(notice_sql)
-
-
-def speak_group_user(sock,args_list):
-	if len(args_list)!=2:
-		send_data(sock,u'【系统提示】取消禁言用户操作参数错误!')
-		return	
-	req_userid=get_userid_of_socket(sock)
-	groupid=args_list[0]
-	to_userid=args_list[1]
-	to_username=get_username_of_userid(to_userid)
-
-	#判断群是否存在
-	if not group_is_exists(groupid):
-		send_data(sock,"【系统提醒】该群GID[ %s ]不存在!" % groupid)
-		return 
-	own_userid=get_own_userid_of_group(groupid)
-	own_username=get_username_of_userid(own_userid)
-	groupname=get_groupname_of_groupid(groupid)
-
-	#判断是否为群主,非群主不能踢用户
-	if req_userid != own_userid:
-		send_data(sock,u'【系统消息】 您不是群[ %s|GID:%s ]的群主，无权取消禁言用户!' % (groupname,groupid))
-		return
-
-	if not userid_is_exists(to_userid):
-		send_data(sock,u'【系统消息】 用户UID[ %s ]在系统中不存在' % (get_custom_time_string(),to_userid))
-		return
-
-	#判断当前用户是否在群内
-	if not userid_is_exists_in_group(to_userid):
-		send_data(sock,u"【系统提示】用户[ %s|UID:%s ]不在群[ %s|GID: ]内!" % (to_username,to_userid,groupname,groupid))
-		return
-
-	#判断当前用户是否在群内,并且是否禁言
-	if not user_is_forbidden_speaking_in_group(userid,groupid):
+	if not user_is_forbidden_speaking_in_group(userid,groupid) and is_nospeak_group_user==0:
 		send_data(sock,u"【系统消息】用户 [ %s|UID:%s ]在群[ %s|GID:%s ]内未被禁言，无需此操作!" % (to_username,to_userid,groupname,groupid))
 		return
 
-	#取消禁言用户
-	sql='update group_users set is_forbidden_speaking=0 where groupid=%s and userid=%s' % (groupid,to_userid)
+	#禁言用户
+	sql='update group_users set is_forbidden_speaking=%s where groupid=%s and userid=%s' % (is_nospeak_group_user,groupid,to_userid)
 	result=sql_dml(sql)
 	if not result:
-		send_data(sock,u"【系统提示】数据库发送异常，取消禁言用户失败!"
+		send_data(sock,u"【系统提示】数据库发送异常，用户操作失败!"
 		return
 
 	###开始清理redis###
@@ -1174,9 +1115,15 @@ def speak_group_user(sock,args_list):
 	#提醒群用户
 	for group_userid in get_userids_of_group(groupid):
 		if group_userid == to_userid:
-			notice_content='[ %s ]\n【系统消息】您已被群[ %s|GID:%s ]的群主[ %s|UID:%s ]取消禁言!' % (get_custom_time_string(),groupname,groupid,own_username,own_userid)
+			if is_nospeak_group_user == 1:
+				notice_content='[ %s ]\n【系统消息】您已被群[ %s|GID:%s ]的群主[ %s|UID:%s ]禁言!' % (get_custom_time_string(),groupname,groupid,own_username,own_userid)
+			else:
+				notice_content='[ %s ]\n【系统消息】您已被群[ %s|GID:%s ]的群主[ %s|UID:%s ]取消禁言!' % (get_custom_time_string(),groupname,groupid,own_username,own_userid)
 		else:
-			notice_content='[ %s ]\n【系统消息】用户[ %s|UID:%s ]已被群[ %s|GID:%s ]的群主[ %s|UID:%s ]取消禁言!' % (get_custom_time_string(),to_username,to_userid,groupname,groupid,own_username,own_userid)
+			if is_nospeak_group_user == 1:
+				notice_content='[ %s ]\n【系统消息】用户[ %s|UID:%s ]已被群[ %s|GID:%s ]的群主[ %s|UID:%s ]禁言!' % (get_custom_time_string(),to_username,to_userid,groupname,groupid,own_username,own_userid)
+			else:
+				notice_content='[ %s ]\n【系统消息】用户[ %s|UID:%s ]已被群[ %s|GID:%s ]的群主[ %s|UID:%s ]取消禁言!' % (get_custom_time_string(),to_username,to_userid,groupname,groupid,own_username,own_userid)
 		#判断用户是否在线
 		if user_is_online(group_userid):
 			notice_sock=get_socket_of_userid(group_userid)
@@ -1184,8 +1131,11 @@ def speak_group_user(sock,args_list):
 		else:
 			notice_sql='insert into user_notice(userid,content,status,created_at) values(%s,"%s",0,now())' % (group_userid,notice_content)
 			sql_dml(notice_sql)
+
+def speak_group_user(sock,args_list):
+	nospeak_group_user(sock,args_list,0)
 	
-def no_speak_group(sock,args_list):
+def nospeak_group(sock,args_list):
 	if len(args_list)!=1:
 		send_data(sock,u'【系统提示】取消禁言用户操作参数错误!')
 		return	
@@ -1564,12 +1514,12 @@ def handle_epollout(fd,c_sock):
 				'cg': create_group,
 				'delgroup': delete_group,
 				'dg': delete_group,
-				'nospkgroup': no_speak_group,
-				'nsg': no_speak_group,
+				'nospkgroup': nospeak_group,
+				'nsg': nospeak_group,
 				'spkgroup': speak_group,
 				'sg': speak_group,
-				'nospkuser': no_speak_group_user,
-				'nsu': no_speak_group_user,
+				'nospkuser': nospeak_group_user,
+				'nsu': nospeak_group_user,
 				'spkuser': speak_group_user,
 				'su': speak_group_user
 			}
