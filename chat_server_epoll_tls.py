@@ -58,7 +58,7 @@ except:
 noargs_cmd=['listfriends','lf','listgroups','lg','listallgroup','lag','close','logout']
 
 #带参数命令
-args_cmd=['msg','m','gmsg','gm','adduser','au','deluser','du','entergroup','eng','exitgroup','exg','kickout','ko','reject','rj','accept','ac','creategroup','cg','delgroup','dg','listgroupusers','lgu','auth','echo','nospkuser','nsu','spkuser','su','nospkgroup','nsg','spkgroup','sg']
+args_cmd=['msg','m','gmsg','gm','addfriend','af','deluser','du','entergroup','eng','exitgroup','exg','kickout','ko','reject','rj','accept','ac','creategroup','cg','delgroup','dg','listgroupusers','lgu','auth','echo','nospkuser','nsu','spkuser','su','nospkgroup','nsg','spkgroup','sg']
 
 #命令帮助提示
 cmd_help="""
@@ -151,7 +151,7 @@ def del_userid_to_socket(sock):
 
 #转换发送的数据成二进制数据并发送
 def send_data(sock,data):
-	b_data=bytes(b_data,encoding='utf-8')
+	b_data=bytes(data,encoding='utf-8')
 	b_datasize=struct.pack('H',len(b_data))
 	try:
 		sock.sendall(b_datasize+b_data)
@@ -212,7 +212,7 @@ def groupid_is_exists(groupid):
 def get_username_of_userid(userid):
 	#读取redis
 	r_key=KV_USERID_GET_USERNAME % userid	
-	if not r_key.exists(r_key):
+	if not r_redis.exists(r_key):
 		sql='select username from user where id=%s' % userid
 		res=sql_query(sql)
 		if res:
@@ -221,7 +221,7 @@ def get_username_of_userid(userid):
 			return q_username 
 		return ''
 	else:
-		return r_redis.get(r_key)
+		return r_redis.get(r_key).decode('utf-8')
 
 def get_groupname_of_groupid(groupid):
 	r_key=KV_GROUPID_GET_GROUPNAME % groupid
@@ -286,15 +286,15 @@ def userid_is_exists_in_group(userid,groupid):
 
 def get_counts_of_group(groupid):
 	sql='select count(1) from group_users where groupid=%s' % groupid
-	return sql_query(sql)
+	return sql_query(sql)[0][0]
 
 def get_create_group_limits_of_userid(userid):
 	sql='select group_limits from user where id=%s' % userid 
-	return sql_query(sql)
+	return sql_query(sql)[0][0]
 
 def get_has_group_counts_of_userid(userid):
 	sql='select count(1) from `group` where own_userid=%s' % userid 
-	return sql_query(sql)
+	return sql_query(sql)[0][0]
 
 def group_is_forbidden_speaking(groupid):
 	r_key=KV_IS_FORBIDDEN_SPEAKING_GROUPID % groupid
@@ -378,12 +378,12 @@ def push_messages(sock,userid):
 	#是否收到提醒消息
 	sql='select id,content from user_notice where status=0 and userid=%s' % userid  
 	res=sql_query(sql)
-	rowid_list=[]
+	rowids_list=[]
 	for r in res:
 		rowid=r[0]
 		message_content=r[1]
 		messages_list.append(message_content)	
-		rowid_list.append(rowid)
+		rowids_list.append(rowid)
 	if rowids_list:	
 		rowids=','.join(rowids_list)
 		sql='update user_notice set status=1 where id in (%s)' % rowids
@@ -437,7 +437,7 @@ def send_user_message(sock,args_list):
 
 	#判断当前发送消息的接收方是否为好友，如果不是拒绝发送消息
 	if user_is_friend_of_user(send_userid,to_userid):
-		send_data(sock,u'[ %s ]【系统消息】 用户[ %s|UID:%s ]不是您的好友,不能发送消息!' % (get_custom_time_string(),to_username,to_useridi))
+		send_data(sock,u'[ %s ]【系统消息】 用户[ %s|UID:%s ]不是您的好友,不能发送消息!' % (get_custom_time_string(),to_username,to_userid))
 		return
 
 	to_sock=get_socket_of_userid(to_userid)
@@ -504,11 +504,12 @@ def add_friend(sock,args_list):
 		send_data(sock,u'【系统提示】添加好友的命令错误!')
 		return
 	req_userid=get_userid_of_socket(sock)
-	req_username=get_username_of_userid(userid)
+	req_username=get_username_of_userid(req_userid)
 	to_userid=args_list[0]
+	to_username=get_username_of_userid(to_userid)
 
 	#判断userid是否存在
-	if userid_is_exists(to_userid):
+	if not userid_is_exists(to_userid):
 		send_data(sock,u"【系统提示】系统UID[ %s ]不存在!" % to_userid)
 		return
 
@@ -519,12 +520,12 @@ def add_friend(sock,args_list):
 
 	#判断是否已经添加为好友,或者是否已经存在申请请求
 	if user_is_friend_of_user(req_userid,to_userid):
-		send_data(sock,u"【系统提示】您和用户%s已经是好友关系，不需要再次添加" % to_username)
+		send_data(sock,u"【系统提示】您和用户[ %s|UID:%s ]已经是好友关系，不需要再次添加" % (to_username,to_userid))
 		return
 
 
 	if user_is_exists_add_user_request(userid,to_userid):
-		send_data(sock,u"【系统提示】您已经向%s发送过好友申请，无需再次发送" % to_username)
+		send_data(sock,u"【系统提示】您已经向[ %s|UID:%s ]发送过好友申请，无需再次发送" % (to_username,to_userid)) 
 		return
 	
 	to_sock=get_socket_of_userid(to_userid)
@@ -600,7 +601,7 @@ def enter_group(sock,args_list):
 	groupname=get_groupname_of_groupid(groupid)
 	
 	#判断用户是否已经加入
-	if userid_is_exists_in_group(req_userid,groupid)
+	if userid_is_exists_in_group(req_userid,groupid):
 		send_data(sock,u'【系统提示】您已经在群[ %s|GID:%s ]中,无需加入!'% (groupname,groupid))
 		return
 
@@ -644,7 +645,7 @@ def exit_group(sock,args_list):
 	groupname=get_groupname_of_groupid(groupid)
 
 	#判断用户是否已经加入
-	if userid_is_exists_in_group(req_userid,groupid)
+	if userid_is_exists_in_group(req_userid,groupid):
 		send_data(sock,u'【系统提示】您不在群[ %s|ID:%s ]中,无需退出!'% (groupname,groupid))
 		return
 
@@ -854,17 +855,17 @@ def list_all_groups(sock,args_list):
 		groupid=r[0]
 		groupname=r[1]
 		groupcounts=get_counts_of_group(groupid)
-		own_userid=get_own_userid_of_group(groupid)
+		own_userid=get_own_userid_of_groupid(groupid)
 		if userid==own_userid:
-			groupinfo=u'- [ %s|GID:%s ](%s)(您是群主)' (groupname,groupid,groupcounts)
+			groupinfo=u'- [ %s ]\t%s\t%s\t您是群主' % (groupname,groupid,groupcounts)
 		else:
 			if userid_is_exists_in_group(userid,groupid):
-				groupinfo=u'- [ %s|GID:%s ](%s)(已加入)' (groupname,groupid,groupcounts)
+				groupinfo=u'- [ %s ]\t%s\t%s\t已加入' % (groupname,groupid,groupcounts)
 			else:
-				groupinfo=u'- [ %s|GID:%s ](%s)' (groupname,groupid,groupcounts)
+				groupinfo=u'- [ %s ]\t%s\t%s\t未加入' % (groupname,groupid,groupcounts)
 		groups.append(groupinfo)
 
-	send_data(sock,"当前所有的群:\n%s" % '\n'.join(groups))
+	send_data(sock,"当前所有的群:\n  群名\tGID\t人数\t是否加入\n%s" % '\n'.join(groups))
 
 def list_group_users(sock,args_list):
 	if len(args_list)!=1:
@@ -873,36 +874,38 @@ def list_group_users(sock,args_list):
 	groupid=args_list[0]
 
 	#判断群是否存在
-	if not group_is_exists(groupid):
+	if not groupid_is_exists(groupid):
 		send_data(sock,"【系统提醒】该群GID[ %s ]不存在!" % groupid)
 		return 
 
 	req_userid=get_userid_of_socket(sock)
-	own_userid=get_own_userid_of_group(groupid)
-	groupname=get_groupname_of_group(groupid)
+	own_userid=get_own_userid_of_groupid(groupid)
+	groupname=get_groupname_of_groupid(groupid)
 	groupcounts=get_counts_of_group(groupid)
 
 	#判断是否为群成员，非成员不能查看群信息
-	if userid_is_exists_in_group(userid,groupid):
+	if not userid_is_exists_in_group(req_userid,groupid):
 		send_data(sock,"【系统提示】您非群[ %s|GID:%s ]成员，不能查看群成员信息!" % (groupname,groupid))
 		return
 	
 
 	#群信息	
-	groupinfo=u'[ %s|GID:%s ](%s)' % (groupname,groupid,groupcounts)
+	groupinfo=u'群:[ %s|GID:%s ]（人数:%s)' % (groupname,groupid,groupcounts)
 	#查看群成员信息
 	userids_list=get_userids_of_group(groupid)
 	userinfos_list=[]
 	for userid in userids_list:
+		username=get_username_of_userid(userid)
 		if userid == own_userid:
-			userinfo="- [ %s|UID:%s ](群主)" % ()
+			userinfo="- [ %s|UID:%s ](群主)" % (username,userid)
 		else:
-			userinfo="- [ %s|UID:%s ](成员)" % ()
+			userinfo="- [ %s|UID:%s ](成员)" % (username,userid)
 		if user_is_online(userid):
 			userinfo+='(在线)'
 		else:
 			userinfo+='(离线)'
-	send_data(sock,'%s\n%s' %(group_name,groupinfo,'\n'.join(userinfo)))
+		userinfos_list.append(userinfo)
+	send_data(sock,'%s\n%s' %(groupinfo,'\n'.join(userinfos_list)))
 
 def create_group(sock,args_list):
 	if len(args_list)!=1:
@@ -925,7 +928,7 @@ def create_group(sock,args_list):
 	#获取刚创立的群id
 	sql='select id from `group` where create_userid=%s and is_empty=0' % create_userid;
 	groupid=res[0][0]
-	try:
+
 	#把当前用户加到群内
 	sql='insert into `group_users`(userid,groupid,created_at) values(%s,%s,now())' % (create_userid,groupid)
 	insert_result=sql_dml(sql)
@@ -934,7 +937,7 @@ def create_group(sock,args_list):
 	sql_dml(sql)
 	if create_group_result:
 		send_data(sock,u'【系统消息】群[ %s|GID:%s ]已经创建完成!' % (get_custom_time_string(),groupname,groupid))
-	except as e:
+	else:
 		send_data(sock,u'【系统消息】群[ %s ]已经创建失败!' % (get_custom_time_string(),groupname))
 
 def kickout_group_user(sock,args_list):
@@ -945,10 +948,10 @@ def kickout_group_user(sock,args_list):
 	groupid=args_list[0]
 	to_userid=args_list[1]
 	#判断群是否存在
-	if not group_is_exists(groupid):
+	if not groupid_is_exists(groupid):
 		send_data(sock,"【系统提醒】该群GID[ %s ]不存在!" % groupid)
 		return 
-	own_userid=get_own_userid_of_group(groupid)
+	own_userid=get_own_userid_of_groupid(groupid)
 	own_username=get_username_of_userid(own_userid)
 	groupname=get_groupname_of_groupid(groupid)
 
@@ -980,7 +983,7 @@ def kickout_group_user(sock,args_list):
 	sql='delete from group_users where groupid=%s and userid=%s' % (groupid,to_userid)
 	delete_result=sql_dml(sql)
 	if not delete_result:
-		send_data(sock,u"【系统提示】数据库发送异常，移出用户失败!"
+		send_data(sock,u"【系统提示】数据库发送异常，移出用户失败!")
 		return
 	for group_userid in group_userids_list:
 		if group_userid == to_userid:
@@ -1002,10 +1005,10 @@ def delete_group(sock,args_list):
 	req_userid=get_userid_of_socket(sock)
 	groupid=args_list[0]
 	#判断群是否存在
-	if not group_is_exists(groupid):
+	if not groupid_is_exists(groupid):
 		send_data(sock,"【系统提醒】该群GID[ %s ]不存在!" % groupid)
 		return 
-	own_userid=get_own_userid_of_group(groupid)
+	own_userid=get_own_userid_of_groupid(groupid)
 	own_username=get_username_of_userid(own_userid)
 	groupname=get_groupname_of_groupid(groupid)
 
@@ -1021,14 +1024,14 @@ def delete_group(sock,args_list):
 	sql='delete from group_users where groupid=%s ' % groupid
 	delete_group_users_result=sql_dml(sql)
 	if not delete_group_users_result:
-		send_data(sock,u"【系统提示】数据库发送异常，移出用户失败!"
+		send_data(sock,u"【系统提示】数据库发送异常，移出用户失败!")
 		return
 
 	#删群
 	sql='delete from `group` where id=%s ' % groupid 
 	delete_group_result=sql_dml(sql)
 	if not delete_group_result:
-		send_data(sock,u"【系统提示】数据库发送异常，删除群失败!"
+		send_data(sock,u"【系统提示】数据库发送异常，删除群失败!")
 		return
 
 	###开始更新redis###
@@ -1070,10 +1073,10 @@ def nospeak_group_user(sock,args_list,is_nospeak_group_user=1):
 	to_username=get_username_of_userid(to_userid)
 
 	#判断群是否存在
-	if not group_is_exists(groupid):
+	if not groupid_is_exists(groupid):
 		send_data(sock,"【系统提醒】该群GID[ %s ]不存在!" % groupid)
 		return 
-	own_userid=get_own_userid_of_group(groupid)
+	own_userid=get_own_userid_of_groupid(groupid)
 	own_username=get_username_of_userid(own_userid)
 	groupname=get_groupname_of_groupid(groupid)
 
@@ -1104,7 +1107,7 @@ def nospeak_group_user(sock,args_list,is_nospeak_group_user=1):
 	sql='update group_users set is_forbidden_speaking=%s where groupid=%s and userid=%s' % (is_nospeak_group_user,groupid,to_userid)
 	result=sql_dml(sql)
 	if not result:
-		send_data(sock,u"【系统提示】数据库发送异常，用户操作失败!"
+		send_data(sock,u"【系统提示】数据库发送异常，用户操作失败!")
 		return
 
 	###开始清理redis###
@@ -1143,10 +1146,10 @@ def nospeak_group(sock,args_list):
 	groupid=args_list[0]
 
 	#判断群是否存在
-	if not group_is_exists(groupid):
+	if not groupid_is_exists(groupid):
 		send_data(sock,"【系统提醒】该群GID[ %s ]不存在!" % groupid)
 		return 
-	own_userid=get_own_userid_of_group(groupid)
+	own_userid=get_own_userid_of_groupid(groupid)
 	own_username=get_username_of_userid(own_userid)
 	groupname=get_groupname_of_groupid(groupid)
 
@@ -1290,7 +1293,7 @@ def handle_epollin(fd,c_sock):
 			if cmd == 'auth':
 				#获取用户名和密码
 				try:
-					user=data.decode('utf-8').split(' ')[1]
+					userid=data.decode('utf-8').split(' ')[1]
 					pwd=data.decode('utf-8').split(' ')[2]
 				except:
 					try:
@@ -1300,21 +1303,9 @@ def handle_epollin(fd,c_sock):
 						fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 					return
 
-				#获取用户userid
-				userid=user_name_userid(user)
-
-				if userid < 0:
-					login_err_msg=u'echo 用户名不存在!'
-					fd_to_message_queue[fd].put(login_err_msg)
-					try:
-						epoll.modify(fd,select.EPOLLOUT)	
-					except:
-						epoll.modify(fd,0)
-						fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
-					return
 			
 				#进行认证
-				if user_auth(user,pwd):
+				if user_auth(userid,pwd):
 					#注销同一账号其他客户端的连接,实现单点登录
 					try:
 						#获取用户id
@@ -1586,8 +1577,6 @@ def load_data2redis():
 	for r in res:
 		uid=r[0]
 		name=r[1]
-		r_key=KV_USERNAME_GET_USERID % name	
-		r_redis.set(r_key,uid)	
 
 		r_key=KV_USERID_GET_USERNAME % uid	
 		r_redis.set(r_key,name)	
