@@ -854,71 +854,51 @@ def list_all_groups(sock,args_list):
 		own_userid=get_own_userid_of_group(groupid)
 		if userid==own_userid:
 			groupinfo=u'- [ %s|GID:%s ](%s)(您是群主)' (groupname,groupid,groupcounts)
-			groups.append(groupinfo)
 		else:
 			if userid_is_exists_in_group(userid,groupid):
+				groupinfo=u'- [ %s|GID:%s ](%s)(已加入)' (groupname,groupid,groupcounts)
 			else:
-		sql='select id from `group` where id=%s and userid=%s' % (groupid,userid)
-		res=sql_query(sql)
-		if res:
-			groups.append('- 群名：'+groupname+'|群ID号：'+str(groupid)+'(您是群主)')
-		else:
-			#判断当前用户是否在群内
-			sql='select id from group_users where groupid=%s and userid=%s' % (groupid,userid)
-			res=sql_query(sql)
-			if res:
-				groups.append('- 群名：'+groupname+'|群ID号：'+str(groupid)+'(您已加入)')
-			else:
-				groups.append('- 群名：'+groupname+'|群ID号：'+str(groupid))
+				groupinfo=u'- [ %s|GID:%s ](%s)' (groupname,groupid,groupcounts)
+		groups.append(groupinfo)
 
-	send_data(sock,"当前系统的群:\n%s" % '\n'.join(groups))
+	send_data(sock,"当前所有的群:\n%s" % '\n'.join(groups))
 
-def list_group_users(sock,args):
-	req_userid=get_userid_of_socket(sock)
-	args_list=args
+def list_group_users(sock,args_list):
 	if len(args_list)!=1:
 		send_data(sock,u'【系统提示】列出群成员的操作参数错误')
 		return	
 	groupid=args_list[0]
 
 	#判断群是否存在
-	sql='select id,own_userid,name from `group` where id=%s' % groupid 
-	res=sql_query(sql)
-	if not res:
-		send_data(sock,"【系统提醒】该群ID号[ %s ]不存在!" % groupid)
+	if not group_is_exists(groupid):
+		send_data(sock,"【系统提醒】该群GID号[ %s ]不存在!" % groupid)
 		return 
-	own_userid=res[0][1]
-	group_name=res[0][2]
+
+	req_userid=get_userid_of_socket(sock)
+	own_userid=get_own_userid_of_group(groupid)
+	groupname=get_groupname_of_group(groupid)
+	groupcounts=get_counts_of_group(groupid)
 
 	#判断是否为群成员，非成员不能查看群信息
-	sql='select id from group_users where groupid=%s and userid=%s' % (groupid,req_userid)
-	res=sql_query(sql)
-	if not res:
-		send_data(sock,"【系统提示】您非群[ %s|ID:%s ]成员，不能查看群成员信息!" % (group_name,groupid))
+	if userid_is_exists_in_group(userid,groupid):
+		send_data(sock,"【系统提示】您非群[ %s|GID:%s ]成员，不能查看群成员信息!" % (groupname,groupid))
 		return
-	#查看群成员信息
-	sql='select userid from group_users where groupid=%s' % groupid
-	res=sql_query(sql)
-	mem_list=[]
-	if res:
-		for r in res:
-			mem_info=""
-			mem_userid=r[0]
-			mem_user_name=get_username_of_userid(mem_userid)
-			mem_info='- '+mem_user_name
-			#判断是否是群主
-			if mem_userid == own_userid:
-				mem_info+='[群主]'	
-			else:
-				mem_info+='[成员]'	
 
-			#判断是否在线
-			if user_is_online(mem_userid):
-				mem_info+='(在线)'
-			else:
-				mem_info+='(离线)'
-			mem_list.append(mem_info)
-		send_data(sock,'群[ %s|ID:%s ]成员信息\n%s' %(group_name,groupid,'\n'.join(mem_list)))
+	#群信息	
+	groupinfo=u'[ %s|GID:%s ](%s)' % (groupname,groupid,groupcounts)
+	#查看群成员信息
+	userids_list=get_userids_of_group(groupid)
+	userinfos_list=[]
+	for userid in userids_list:
+		if userid == own_userid:
+			userinfo="- [ %s|UID:%s ](群主)" % ()
+		else:
+			userinfo="- [ %s|UID:%s ](成员)" % ()
+		if user_is_online(userid):
+			userinfo+='(在线)'
+		else:
+			userinfo+='(离线)'
+	send_data(sock,'群[ %s|ID:%s ]成员信息\n%s' %(group_name,groupid,'\n'.join(mem_list)))
 		
 
 def create_group(sock,args):
