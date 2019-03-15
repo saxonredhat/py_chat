@@ -58,7 +58,7 @@ except:
 noargs_cmd=['listfriends','lf','listgroups','lg','listallgroup','lag','close','logout']
 
 #带参数命令
-args_cmd=['msg','m','gmsg','gm','addfriend','af','deluser','du','entergroup','eng','exitgroup','exg','kickout','ko','reject','rj','accept','ac','creategroup','cg','delgroup','dg','listgroupusers','lgu','auth','echo','nospkuser','nsu','spkuser','su','nospkgroup','nsg','spkgroup','sg']
+args_cmd=['msg','m','gmsg','gm','addfriend','af','delfriend','df','entergroup','eng','exitgroup','exg','kickout','ko','reject','rj','accept','ac','creategroup','cg','delgroup','dg','listgroupusers','lgu','auth','echo','nospkuser','nsu','spkuser','su','nospkgroup','nsg','spkgroup','sg']
 
 #命令帮助提示
 cmd_help="""
@@ -131,7 +131,7 @@ def get_custom_time_string(t_format="%Y-%m-%d %X"):
 def get_userid_of_socket(sock):
 	for userid,usock in userid_to_socket.items():
 		if sock == usock:
-			return userid
+			return int(userid)
 
 #获取userid对应的socket
 def get_socket_of_userid(userid):
@@ -157,7 +157,6 @@ def send_data(sock,data):
 		sock.sendall(b_datasize+b_data)
 		return True
 	except:
-		sock.close()
 		return False
 
 def sql_query(sql):
@@ -373,7 +372,7 @@ def push_messages(sock,userid):
 	r_key=LIST_USERMESSAGES_OF_USERID % userid
 	for seq in range(0,r_redis.llen(r_key)):	
 		user_message=r_redis.lpop(r_key).decode('utf-8')
-		messages_list.append(msg)
+		messages_list.append(user_message)
 
 	#是否收到提醒消息
 	sql='select id,content from user_notice where status=0 and userid=%s' % userid  
@@ -436,7 +435,7 @@ def send_user_message(sock,args_list):
 		return
 
 	#判断当前发送消息的接收方是否为好友，如果不是拒绝发送消息
-	if user_is_friend_of_user(send_userid,to_userid):
+	if not user_is_friend_of_user(send_userid,to_userid):
 		send_data(sock,u'[ %s ]【系统消息】 用户[ %s|UID:%s ]不是您的好友,不能发送消息!' % (get_custom_time_string(),to_username,to_userid))
 		return
 
@@ -524,21 +523,21 @@ def add_friend(sock,args_list):
 		return
 
 
-	if user_is_exists_add_user_request(userid,to_userid):
+	if user_is_exists_add_user_request(req_userid,to_userid):
 		send_data(sock,u"【系统提示】您已经向[ %s|UID:%s ]发送过好友申请，无需再次发送" % (to_username,to_userid)) 
 		return
 	
 	to_sock=get_socket_of_userid(to_userid)
-	sql='insert into user_req(userid,type,to_userid,status,created_at) values(%s,1,%s,0,now())' % (userid,to_userid)
+	sql='insert into user_req(userid,type,add_userid,status,created_at) values(%s,1,%s,0,now())' % (req_userid,to_userid)
 	sql_dml(sql)
 	if to_sock:
-		sql='select id from user_req where userid=%s and to_userid=%s and status=0 LIMIT 1' %  (userid,to_userid)
+		sql='select id from user_req where userid=%s and add_userid=%s and status=0 LIMIT 1' %  (req_userid,to_userid)
 		res=sql_query(sql)
 		if not res:
 			return
 		req_id=res[0][0]
-		send_data(to_sock,u"[ %s ]【系统消息】用户%s向您申请添加好友请求!\n同意：\naccept %s \n拒绝：\nreject %s" % (get_custom_time_string(),req_username,req_id,req_id))
-	send_data(sock,u'[ %s ]【系统消息】已向该用户%s发送添加好友申请' % (get_custom_time_string(),to_username))
+		send_data(to_sock,u"[ %s ]【系统消息】用户[ %s|UID:%s ]向您申请添加好友请求!\n同意：\naccept %s \n拒绝：\nreject %s" % (get_custom_time_string(),req_username,req_userid,req_id,req_id))
+	send_data(sock,u'[ %s ]【系统消息】已向该用户[ %s|UID:%s ]发送添加好友申请' % (get_custom_time_string(),to_username,to_userid))
 
 def delete_friend(sock,args_list):
 	if len(args_list)!=1:
@@ -553,24 +552,24 @@ def delete_friend(sock,args_list):
 		return
 
 	#判断是否已经是好友
-	if not user_is_friend_of_user(userid,to_userid):
+	if not user_is_friend_of_user(req_userid,to_userid):
 		send_data(sock,u"【系统提示】您和用户[ %s|UID:%s ]不是好友关系!" % (to_username,to_userid))
 		return
 
 	###开始清除redis###
-	r_key=KV_USERID_ISFRIEND_USERID % (userid,to_userid)
+	r_key=KV_USERID_ISFRIEND_USERID % (req_userid,to_userid)
 	r_redis.delete(r_key)
-	r_key=KV_USERID_ISFRIEND_USERID % (to_userid,userid)
+	r_key=KV_USERID_ISFRIEND_USERID % (to_userid,req_userid)
 	r_redis.delete(r_key)
 	###结束清除redis###
 
 	#双向解除好友关系
-	sql='delete from user_users where userid=%s and friend_userid=%s' % (userid,to_userid) 
+	sql='delete from user_users where userid=%s and friend_userid=%s' % (req_userid,to_userid) 
 	sql_dml(sql)
-	sql='delete from user_users where userid=%s and friend_userid=%s' % (to_userid,userid) 
+	sql='delete from user_users where userid=%s and friend_userid=%s' % (to_userid,req_userid) 
 	sql_dml(sql)
 
-	send_data(sock,u"【系统消息】您和用户[ %s ]已经解除好友关系!" % (to_username))
+	send_data(sock,u"【系统消息】您和用户[ %s|UID:%s ]已经解除好友关系!" % (to_username,to_userid))
 	
 	
 	#通知对方
@@ -697,6 +696,7 @@ def accept_request(sock,args_list):
 	#判断是加群还是添加好友 
 	#加好友
 	if req_type == 1 and add_userid:
+		print(type(accept_userid),type(add_userid))
 		if accept_userid != add_userid:
 			send_data(sock,u'【系统提示】您无权执行该操作!')
 			return 
