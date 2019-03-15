@@ -140,7 +140,7 @@ def get_socket_of_userid(userid):
 
 #判断
 def user_is_online(userid):
-	for userid in userid_to_socket.items():
+	if userid in userid_to_socket.keys():
 		return True
 	return False
 
@@ -327,9 +327,11 @@ def get_userids_of_group(groupid):
 	userids_list=[]
 	r_key=LIST_USERIDS_OF_GROUPID % groupid
 	if r_redis.llen(r_key):
+		print("读取redis")
 		for uid in r_redis.lrange(r_key,0,-1):
 			userids_list.append(int(uid.decode('utf-8')))
 	else:
+		print("查询数据库")
 		sql='select userid from group_users where groupid=%s' % groupid
 		res=sql_query(sql)
 		for r in res:
@@ -441,7 +443,7 @@ def send_user_message(sock,args_list):
 
 	to_sock=get_socket_of_userid(to_userid)
 	if to_sock:
-		send_data(to_sock,send_user_message)
+		send_data(to_sock,user_message)
 	else:
 		r_key=LIST_USERMESSAGES_OF_USERID % to_userid
 		r_redis.rpush(r_key,user_message) 
@@ -463,7 +465,7 @@ def send_group_message(sock,args_list):
 	#获取群主ID
 	own_userid=get_own_userid_of_groupid(groupid)
 	#获取群名
-	groupname=get_own_userid_of_groupid(groupid)
+	groupname=get_groupname_of_groupid(groupid)
 	#获取发送者的userid
 	send_userid=get_userid_of_socket(sock)
 	#判断是否为群成员，非成员不能发送消息
@@ -1293,7 +1295,7 @@ def handle_epollin(fd,c_sock):
 			if cmd == 'auth':
 				#获取用户名和密码
 				try:
-					userid=data.decode('utf-8').split(' ')[1]
+					userid=int(data.decode('utf-8').split(' ')[1])
 					pwd=data.decode('utf-8').split(' ')[2]
 				except:
 					try:
