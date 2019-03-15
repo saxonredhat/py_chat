@@ -196,6 +196,24 @@ def sql_dml(sql):
 		cursor.close()
 		db.close()
 
+def userid_is_exists(userid):
+	r_key=KV_EXISTS_USERID % userid 
+	if not r_redis.exists(r_key):
+		sql='select id from user where id=%s' % userid 
+		if not sql_query(sql):
+			r_redis.set(r_key,"")
+			return False
+	return True
+
+def groupid_is_exists(groupid):
+	#读取redis
+	r_key=KV_EXISTS_GROUPID % groupid
+	if not r_redis.exists(r_key):
+		sql='select id from `group` where id=%s' % groupid
+		if not sql_query(sql):
+			return False
+	return True
+
 def get_name_of_userid(userid):
 	#读取redis
 	r_key=KV_USERID_GET_USERNAME % userid	
@@ -210,14 +228,19 @@ def get_name_of_userid(userid):
 	else:
 		return r_redis.get(r_key)
 
-def userid_is_exists(userid):
-	r_key=KV_EXISTS_USERID % userid 
-	if not r_redis.exists(r_key):
-		sql='select id from user where id=%s' % userid 
-		if not sql_query(sql):
-			r_redis.set(r_key,"")
-			return False
-	return True
+def get_groupname_of_groupid(groupid):
+	r_key=KV_GROUPID_GET_GROUPNAME % groupid
+	if r_redis.exists(r_key) and r_redis.get(r_key):
+		groupname=r_redis.get(r_key).decode('utf-8')
+	else:
+		sql='select name from `group` where id=%s' % groupid
+		res=sql_query(sql)
+		if res:
+			groupname=res[0][0]
+			r_redis.set(r_key,groupname)	
+		else:
+			groupname=''
+	return groupname
 
 def user_is_friend_of_user(userid,userid2):
 	r_key=KV_USERID_ISFRIEND_USERID % (userid,userid2)
@@ -234,31 +257,14 @@ def user_is_exists_add_user_request(userid,userid2):
 	if sql_query(sql):
 		return True
 	return False
+
+def user_is_exists_add_group_request(userid,groupid):
+	sql='select add_groupid from user_req where userid=%s and add_groupid=%s and status=0' % (userid,groupid)
+	res=sql_query(sql)
+	if res:
+		return True
+	return False
 	
-
-def groupid_is_exists(groupid):
-	#读取redis
-	r_key=KV_EXISTS_GROUPID % groupid
-	if not r_redis.exists(r_key):
-		sql='select id from `group` where id=%s' % groupid
-		if not sql_query(sql):
-			return False
-	return True
-
-def get_groupname_of_groupid(groupid):
-	r_key=KV_GROUPID_GET_GROUPNAME % groupid
-	if r_redis.exists(r_key) and r_redis.get(r_key):
-		groupname=r_redis.get(r_key).decode('utf-8')
-	else:
-		sql='select name from `group` where id=%s' % groupid
-		res=sql_query(sql)
-		if res:
-			groupname=res[0][0]
-			r_redis.set(r_key,groupname)	
-		else:
-			groupname=''
-	return groupname
-
 def get_own_userid_of_groupid(groupid):
 	r_key=KV_GROUPID_GET_OWN_USERID % groupid
 	if r_redis.exists(r_key) and r_redis.get(r_key):
@@ -333,10 +339,8 @@ def user_auth(userid,password):
 		q_username=res[0][0]
 		q_password=res[0][1]
 		if q_password == password:
-			print(u'[ %s ] 用户[ %s|ID:%s ]认证成功' % (get_custom_time_string(),q_username,userid))
 			return True
 		else:
-			print(u'[ %s ] 用户[ %s|ID:%s ]认证失败，密码错误!' % (get_custom_time_string(),q_username,userid))
 			return False
 	return False 
 
@@ -489,7 +493,6 @@ def send_group_message(sock,args_list):
 			r_redis.rpush(r_key,group_message)
 
 def add_friend(sock,args_list):
-	args_list=args
 	if len(args_list)!=1:
 		send_data(sock,u'【系统提示】添加好友的命令错误!')
 		return
@@ -529,105 +532,91 @@ def add_friend(sock,args_list):
 		send_data(to_sock,u"[ %s ]【系统消息】用户%s向您申请添加好友请求!\n同意：\naccept %s \n拒绝：\nreject %s" % (get_custom_time_string(),req_username,req_id,req_id))
 	send_data(sock,u'[ %s ]【系统消息】已向该用户%s发送添加好友申请' % (get_custom_time_string(),to_username))
 
-def delete_friend(conn,args):
-	userid=get_userid_of_socket(conn)	
-	req_username=get_name_of_userid(userid)
-	args_list=args
+def delete_friend(sock,args_list):
 	if len(args_list)!=1:
-		send_data(conn,u'【系统提示】删除好友的命令错误')
+		send_data(sock,u'【系统提示】删除好友的命令错误!')
 		return
-	to_username=args_list[0]
-	sql='select id from user where username="%s"' % to_username
-	res=sql_query(sql)
-	if not res:
-		send_data(conn,u"【系统提示】系统不存在用户[ %s ]" % to_username)
+	req_userid=get_userid_of_socket(sock)	
+	req_username=get_name_of_userid(req_userid)
+	to_userid=args_list[0]
+	to_username=get_name_of_userid(to_userid)
+	if not userid_is_exists(to_userid):
+		send_data(sock,u"【系统提示】系统UID不存在!" % to_userid)
 		return
-	del_userid=res[0][0]
+
 	#判断是否已经是好友
-	sql='select id from user_users where userid=%s and friend_userid=%s' % (userid,del_userid)
-	res=sql_query(sql)
-	if not res:
-		send_data(conn,u"【系统提示】您和用户[ %s ]不是好友关系" % to_username)
+	if not user_is_friend_of_user(userid,to_userid):
+		send_data(sock,u"【系统提示】您和用户[ %s|UID:%s ]不是好友关系!" % (to_username,to_userid))
 		return
 
 	###开始清除redis###
-	r_key=KV_USERID_ISFRIEND_USERID % (userid,del_userid)
+	r_key=KV_USERID_ISFRIEND_USERID % (userid,to_userid)
 	r_redis.delete(r_key)
-	print("redis删除键值:%s",r_key)
-
-	r_key=KV_USERID_ISFRIEND_USERID % (del_userid,userid)
+	r_key=KV_USERID_ISFRIEND_USERID % (to_userid,userid)
 	r_redis.delete(r_key)
-	print("redis删除键值:%s",r_key)
 	###结束清除redis###
 
 	#双向解除好友关系
-	sql='delete from user_users where userid=%s and friend_userid=%s' % (userid,del_userid) 
+	sql='delete from user_users where userid=%s and friend_userid=%s' % (userid,to_userid) 
 	sql_dml(sql)
-	sql='delete from user_users where userid=%s and friend_userid=%s' % (del_userid,userid) 
+	sql='delete from user_users where userid=%s and friend_userid=%s' % (to_userid,userid) 
 	sql_dml(sql)
-	send_data(conn,u"[ %s ]【系统消息】您和用户[ %s ]已经解除好友关系" % (get_custom_time_string(),to_username))
+
+	send_data(sock,u"【系统消息】您和用户[ %s ]已经解除好友关系!" % (to_username))
 	
 	
 	#通知对方
-	to_conn=get_socket_of_userid(del_userid)
-	notice_content='[ %s ]【系统消息】用户[ %s ]已和你您解除好友关系' % (get_custom_time_string(),req_username)
-	if to_conn:
-		send_data(to_conn,notice_content)
+	to_sock=get_socket_of_userid(to_userid)
+	notice_content='[ %s ]【系统消息】用户[ %s ]已和你您解除好友关系!' % (get_custom_time_string(),req_username)
+	if to_sock:
+		send_data(to_sock,notice_content)
 	else:
-		notice_sql='insert into user_notice(userid,content,status,created_at) values(%s,"%s",0,now())' % (del_userid,notice_content)
+		notice_sql='insert into user_notice(userid,content,status,created_at) values(%s,"%s",0,now())' % (to_userid,notice_content)
 		sql_dml(notice_sql)
 	
 
-def enter_group(conn,args):
-	req_userid=get_userid_of_socket(conn)
-	#判断参数是否正确
-	args_list=args
+def enter_group(sock,args_list):
 	if len(args_list)!=1:
-		send_data(conn,u'【系统提示】加群的操作参数错误')
+		send_data(sock,u'【系统提示】加群的操作参数错误')
 		return
 
+	req_userid=get_userid_of_socket(sock)
 	groupid=args_list[0]
 	#判断群是否存在
-	sql='select id,own_userid,name from `group` where id=%s' % groupid 
-	res=sql_query(sql)
-	if not res:
-		send_data(conn,"【系统提示】该群ID号[ %s ]不存在!" % groupid)
+	if not groupid_is_exists(groupid):
+		send_data(sock,"【系统提示】该群ID号[ %s ]不存在!" % groupid)
 		return 
-	own_userid=res[0][1]
-	group_name=res[0][2]
+
+	#获取群主ID
+	own_userid=get_own_userid_of_groupid(groupid)
+	#获取群名
+	groupname=get_groupname_of_groupid(groupid)
 	
 	#判断用户是否已经加入
-	sql='select g.id,g.name from `group` g left join group_users gu on gu.groupid=g.id where g.id=%s and (g.own_userid=%s or gu.userid=%s)' % (groupid,req_userid,req_userid)
-	res=sql_query(sql)
-	if res:
-		send_data(conn,u'【系统提示】您已经在群[ %s|ID:%s ]中,无需加入!'% (res[0][1],res[0][0]))
+	if userid_is_exists_in_group(req_userid,groupid)
+		send_data(sock,u'【系统提示】您已经在群[ %s|GID:%s ]中,无需加入!'% (groupname,groupid))
 		return
 
 	#判断是否已经存在加入该群的申请请求
-	sql='select ur.id,g.id,g.name from user_req ur left join `group` g on ur.add_groupid=g.id where ur.userid=%s and ur.add_groupid=%s and ur.status=0' % (req_userid,groupid)
-	res=sql_query(sql)
-	if res:
-		send_data(conn,u'【系统提示】您已经申请过加入群[ %s|ID:%s ]，请等待回复!'% (res[0][2],res[0][1]))
+	if user_is_exists_add_group_request(req_userid,groupid):	
+		send_data(sock,u'【系统提示】您已经申请过加入群[ %s|GID:%s ]，请等待回复!'% (groupname,groupid))
 		return
 	
 	#添加加群请求
 	sql='insert into user_req(userid,type,add_groupid,status,created_at) values(%s,2,%s,0,now())' % (req_userid,groupid)
 	sql_dml(sql)
-	req_username=get_name_of_userid(req_userid)
-
-	send_data(conn,u'【系统消息】您申请了加入群[ %s|ID:%s ]，请等待回复!'% (group_name,groupid))
-	
 	sql='select id from user_req where userid=%s and add_groupid=%s and status=0 LIMIT 1' % (req_userid,groupid)
 	res=sql_query(sql)
 	if not res:
 		return
 	req_id=res[0][0]
+
 	#判断群主是否在在线，在线直接发送加群提醒，如果不在线，群主通过user_req可以看到加群消息	
+	req_username=get_name_of_userid(req_userid)
 	if user_is_online(own_userid):
-		own_conn=get_socket_of_userid(own_userid)
-		send_data(own_conn,u'[ %s ]【系统消息】用户[ %s ]申请加入群[ %s|ID:%s ]\n同意：\naccept %s \n拒绝：\nreject %s' % (get_custom_time_string(),req_username,group_name,groupid,req_id,req_id))
-
-
+		own_sock=get_socket_of_userid(own_userid)
+		send_data(own_sock,u'[ %s ]【系统消息】用户[ %s ]申请加入群[ %s|GID:%s ]\n同意：\naccept %s \n拒绝：\nreject %s' % (get_custom_time_string(),req_username,groupname,groupid,req_id,req_id))
+	send_data(sock,u'【系统消息】您刚刚申请了加入群[ %s|GID:%s ]，请等待回复!'% (groupname,groupid))
 
 def exit_group(conn,args):
 	req_userid=get_userid_of_socket(conn)
@@ -1486,13 +1475,12 @@ def handle_epollin(fd,c_sock):
 							fd_to_socket[user_conn.fileno()].shutdown(socket.SHUT_RDWR)
 					except:
 						pass
-					#推送消息
-					#push_messages(c_sock,user)
 					#添加到在线用户列表
 					userid_to_socket[userid]=c_sock
 					#添加到在线fd2sock列表
 					auth_fd_to_socket[fd]=c_sock
 					#提示登录成功的信息
+
 					#加入用户sock2command_count
 					fd_to_cmd_count[fd]=0
 					login_ok=u'echo 登录成功!'
