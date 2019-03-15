@@ -135,8 +135,19 @@ def get_userid_of_socket(sock):
 
 #获取userid对应的socket
 def get_socket_of_userid(userid):
+	if userid in userid_to_socket.items():
+		return userid_to_socket[userid] 
+
+#获取userid对应的socket
+def get_socket_of_userid(userid):
 	if userid in userid_to_socket.keys():
 		return userid_to_socket[userid]
+
+#判断
+def user_is_online(userid):
+	for userid in userid_to_socket.items():
+		return True
+	return False
 
 #删除字典userid_to_socket中对应键值
 def del_userid_to_socket(sock):
@@ -199,14 +210,117 @@ def get_name_of_userid(userid):
 	else:
 		return r_redis.get(r_key)
 
-def userid_is_online(userid):
-	for userid in userid_to_socket.items():
+def userid_is_exists(userid):
+	r_key=KV_EXISTS_USERID % userid 
+	if not r_redis.exists(r_key):
+		sql='select id from user where id=%s' % userid 
+		if not sql_query(sql):
+			r_redis.set(r_key,"")
+			return False
+	return True
+
+def user_is_friend_of_user(userid,userid):
+	r_key=KV_USERID_ISFRIEND_USERID % (send_userid,to_userid)
+	is_friend=r_redis.exists(r_key)
+	if not is_friend:
+		sql='select userid from user_users where userid=%s and friend_userid=%s' % (send_userid,to_userid)
+		res=sql_query(sql)
+		if not res:
+			send_data(sock,u'[ %s ]【系统消息】 用户[ %s|UID:%s ]不是您的好友,不能发送消息!' % (get_custom_time_string(),to_username,to_useridi))
+			return 
+		#写入redis
+		r_redis.set(r_key,"")
+
+
+def groupid_is_exists(groupid):
+	#读取redis
+	r_key=KV_EXISTS_GROUPID % groupid
+	if not r_redis.exists(r_key):
+		sql='select id from `group` where id=%s' % groupid
+		if not sql_query(sql):
+			return False
+	return True
+
+def get_groupname_of_groupid(groupid):
+	r_key=KV_GROUPID_GET_GROUPNAME % groupid
+	if r_redis.exists(r_key) and r_redis.get(r_key):
+		groupname=r_redis.get(r_key).decode('utf-8')
+	else:
+		sql='select name from `group` where id=%s' % groupid
+		res=sql_query(sql)
+		if res:
+			groupname=res[0][0]
+			r_redis.set(r_key,groupname)	
+		else:
+			groupname=''
+	return groupname
+
+def get_own_userid_of_groupid(groupid):
+	r_key=KV_GROUPID_GET_OWN_USERID % groupid
+	if r_redis.exists(r_key) and r_redis.get(r_key):
+		own_userid=int(r_redis.get(r_key).decode('utf-8'))
+	else:
+		sql='select own_userid from `group` where id=%s' % groupid
+		res=sql_query(sql)
+		if res:
+			own_userid=int(res[0][0])
+			r_redis.set(r_key,own_userid)
+		else:
+			own_userid=-1
+	return own_userid
+
+def userid_is_exists_in_group(userid,groupid):
+	r_key=KV_USERID_IN_GROUPID % (userid,groupid)
+	if not r_redis.exists(r_key):
+		sql='select id from group_users where groupid=%s and userid=%s' % (groupid,userid)
+		res=sql_query(sql)
+		if not res:
+			r_redis.set(r_key,"")
+			return False 
+	return True 
+
+def group_is_forbidden_speaking(groupid):
+	r_key=KV_NOSPEAKING_GROUPID % groupid
+	if not r_redis.exists(r_key):
+		sql='select is_group_forbidden_speaking from `group` where id=%s' % groupid
+		res=sql_query(sql)
+		group_forbidden_speaking=int(res[0][0])
+		r_redis.set(r_key,is_group_forbidden_speaking)
+	else:
+		group_is_forbidden_speaking=int(r_redis.get(r_key).decode('utf-8'))
+
+	if is_group_forbidden_speaking==1:
+		return True 
+	return False
+
+def user_is_forbidden_speaking_in_group(userid,groupid):
+	r_key=KV_NOSPEAKING_USERID_IN_GROUPID % (groupid,userid)
+	if not r_redis.exists(r_key):
+		sql='select is_forbidden_speaking from group_users where groupid=%s and userid=%s' % (groupid,userid)
+		res=sql_query(sql)
+		is_forbidden_speaking=int(res[0][0])
+		r_redis.set(r_key,is_forbidden_speaking)
+	else:
+		is_forbidden_speaking=int(r_redis.get(r_key).decode('utf-8'))
+
+	if is_forbidden_speaking == 1:
 		return True
 	return False
 
-def get_socket_of_userid(userid):
-	if userid in userid_to_socket.items():
-		return userid_to_socket[userid] 
+def get_userids_of_group(groupid):
+	userids_list=[]
+	r_key=LIST_USERIDS_OF_GROUPID % groupid
+	if r_redis.llen(r_key):
+		for uid in r_redis.lrange(r_key,0,-1):
+			userids_list.append(int(uid.decode('utf-8')))
+	else:
+		sql='select userid from group_users where groupid=%s' % groupid
+		res=sql_query(sql)
+		for r in res:
+			to_userid=r[0]
+			userid_list.append(to_userid)
+			r_redis.rpush(r_key,to_userid)
+	return userids_list
 
 def user_auth(userid,password):
 	sql="select username,password from user where id=%s" % userid
@@ -283,26 +397,20 @@ def push_messages(sock,userid):
 		groupname=r[3]
 		send_data(sock,u'[ %s ]\n【系统消息】用户[ %s|ID:%s ]向你申请加入群[ %s|ID:%s ]\n同意：accept %s \n拒绝：reject %s' % (get_custom_time_string(),req_username,req_userid,groupname,groupid,req_id,req_id))
 
+
+#用户给好友发送信息
 def send_user_message(sock,args_list):
 	if len(args_list)<2:
 		send_data(sock,u'[ %s ]【系统提示】发送消息的操作参数错误' % get_custom_time_string())
 		return	
 	send_userid=get_userid_of_socket(sock)
+	message_content=' '.join(args_list[1:])
 	to_userid=args_list[0]
 	to_username=get_name_of_userid(to_userid)
-	message_content=' '.join(args_list[1:])
 
-	#读取redis
-	r_key=KV_EXISTS_USERID % to_userid 
-	if not r_redis.exists(r_key):
-		sql='select username from user where id=%s' % to_userid 
-		res=sql_query(sql)
-		if not res:
-			print(u'[ %s ] 用户ID[ %s ]在系统中不存在' % (get_custom_time_string(),to_userid))	
-			send_data(sock,u'[ %s ]【系统消息】 用户ID[ %s ]在系统中不存在' % (get_custom_time_string(),to_userid))
-			return
-		#写入redis
-		r_redis.set(r_key,"")
+	if not userid_is_exists(to_userid):
+		send_data(sock,u'[ %s ]【系统消息】 用户ID[ %s ]在系统中不存在' % (get_custom_time_string(),to_userid))
+		return
 
 	send_userid=get_userid_of_socket(sock)
 	send_username=get_name_of_userid(send_userid)
@@ -313,7 +421,6 @@ def send_user_message(sock,args_list):
 		return
 
 	#判断当前发送消息的接收方是否为好友，如果不是拒绝发送消息
-	#加载redis中的数据
 	r_key=KV_USERID_ISFRIEND_USERID % (send_userid,to_userid)
 	is_friend=r_redis.exists(r_key)
 	if not is_friend:
@@ -333,54 +440,6 @@ def send_user_message(sock,args_list):
 		r_redis.rpush(r_key,send_user_message) 
 	send_data(sock,send_user_message)
 
-def userid_is_exists(userid):
-
-def groupid_is_exists(groupid):
-	#读取redis
-	r_key=KV_EXISTS_GROUPID % groupid
-	if not r_redis.exists(r_key):
-		sql='select id from `group` where id=%s' % groupid
-		if not sql_query(sql):
-			return False
-	return True
-
-def get_groupname_of_groupid(groupid):
-	r_key=KV_GROUPID_GET_GROUPNAME % groupid
-	if r_redis.exists(r_key) and r_redis.get(r_key):
-		groupname=r_redis.get(r_key).decode('utf-8')
-	else:
-		sql='select name from `group` where id=%s' % groupid
-		res=sql_query(sql)
-		if res:
-			groupname=res[0][0]
-			r_redis.set(r_key,groupname)	
-		else:
-			groupname=''
-	return groupname
-
-def get_own_userid_of_groupid(groupid):
-	r_key=KV_GROUPID_GET_OWN_USERID % groupid
-	if r_redis.exists(r_key) and r_redis.get(r_key):
-		own_userid=int(r_redis.get(r_key).decode('utf-8'))
-	else:
-		sql='select own_userid from `group` where id=%s' % groupid
-		res=sql_query(sql)
-		if res:
-			own_userid=int(res[0][0])
-			r_redis.set(r_key,own_userid)
-		else:
-			own_userid=-1
-	return own_userid
-
-def userid_is_exists_in_group(userid,groupid):
-	r_key=KV_USERID_IN_GROUPID % (userid,groupid)
-	if not r_redis.exists(r_key):
-		sql='select id from group_users where groupid=%s and userid=%s' % (groupid,userid)
-		res=sql_query(sql)
-		if not res:
-			r_redis.set(r_key,"")
-			return False 
-	return True 
 
 def send_group_message(sock,args_list):
 	if len(args_list)<2:
@@ -398,73 +457,34 @@ def send_group_message(sock,args_list):
 	own_userid=get_own_userid_of_groupid(groupid)
 	#获取群名
 	groupname=get_own_userid_of_groupid(groupid)
-
+	#获取发送者的userid
 	send_userid=get_userid_of_socket(sock)
-
 	#判断是否为群成员，非成员不能发送消息
 	if not userid_is_exists_in_group(send_userid,groupid):
-	#读取redis
-	if not r_redis.exists(r_key):
-		sql='select id from group_users where groupid=%s and userid=%s' % (groupid,send_userid)
-		res=sql_query(sql)
-		if not res:
-			send_data(sock,"【系统提示】您非群[ %s|ID:%s ]成员，不能发送群信息!" % (group_name,groupid))
-			return
-		r_redis.set(r_key,"")
+		send_data(sock,"【系统提示】您非群[ %s|ID:%s ]成员，不能发送群信息!" % (groupname,groupid))
+		return
 
 	#判断是否是群主，非群主判断是否群禁言,判断是否用户被禁言
 	if send_userid != own_userid:
 		#是否当前群禁言
-		#读取redis
-		r_key=KV_NOSPEAKING_GROUPID % groupid
-		if r_redis.exists(r_key):
-			is_group_forbidden_speaking=r_redis.get(r_key).decode('utf-8')
-		else:
-			sql='select is_group_forbidden_speaking from `group` where id=%s' % groupid
-			res=sql_query(sql)
-			is_group_forbidden_speaking=res[0][0]
-			r_redis.set(r_key,is_group_forbidden_speaking)
-
-		if int(is_group_forbidden_speaking):
-			send_data(sock,u'[ %s ]\n【系统消息】 群[ %s|GID:%s ]已被禁言!' % (get_custom_time_string(),group_name,groupid))
+		if group_is_forbidden_speaking(groupid):
+			send_data(sock,u'[ %s ]\n【系统消息】 群[ %s|GID:%s ]已被禁言!' % (get_custom_time_string(),groupname,groupid))
 			return 
 
 		#是否当前用户被禁言
-		#读取redis
-		r_key=KV_NOSPEAKING_USERID_IN_GROUPID % (groupid,send_userid)
-		if r_redis.exists(r_key):
-			is_forbidden_speaking=r_redis.get(r_key).decode('utf-8')
-		else:
-			sql='select is_forbidden_speaking from group_users where groupid=%s and userid=%s' % (groupid,send_userid)
-			res=sql_query(sql)
-			is_forbidden_speaking=res[0][0]
-			r_redis.set(r_key,is_forbidden_speaking)
-
-		if int(is_forbidden_speaking):
-			send_data(sock,u'[ %s ]\n【系统消息】 您已被群[ %s|GID:%s ]的群主禁言!' % (get_custom_time_string(),group_name,groupid))
+		if user_is_forbidden_speaking_in_group(groupid,send_userid):
+			send_data(sock,u'[ %s ]\n【系统消息】 您已被群[ %s|GID:%s ]的群主禁言!' % (get_custom_time_string(),groupname,groupid))
 			return 
 
 	#获取群用户，发送群消息
-	send_userid=get_userid_of_socket(sock)
 	send_username=get_name_of_userid(send_userid)
-	group_message_content='[ %s ]\n【群消息】[ %s|GID:%s ][ %s|UID:%s ]:%s' % (get_custom_time_string(),group_name,groupid,send_username,send_userid,message_content)
-	userids_list=[]
-	r_key=LIST_USERIDS_OF_GROUPID % groupid
-	if r_redis.llen(r_key):
-		for uid in r_redis.lrange(r_key,0,-1):
-			userids_list.append(int(uid.decode('utf-8')))
-	else:
-		sql='select userid from group_users where groupid=%s' % groupid
-		res=sql_query(sql)
-		for r in res:
-			to_userid=r[0]
-			userid_list.append(to_userid)
-			#写入redis
-			r_redis.rpush(r_key,to_userid)
-		
+	group_message_content='[ %s ]\n【群消息】[ %s|GID:%s ][ %s|UID:%s ]:%s' % (get_custom_time_string(),groupname,groupid,send_username,send_userid,message_content)
+
+	#获取群用户，发送群消息
+	userids_list=get_userids_of_group(groupid)
 	for to_userid in userids_list:
 		#判断用户是否在线
-		if userid_is_online(to_userid):
+		if user_is_online(to_userid):
 			to_sock=get_socket_of_userid(to_userid)
 			send_data(to_sock,group_message_content)
 		else:
@@ -611,7 +631,7 @@ def enter_group(conn,args):
 		return
 	req_id=res[0][0]
 	#判断群主是否在在线，在线直接发送加群提醒，如果不在线，群主通过user_req可以看到加群消息	
-	if userid_is_online(own_userid):
+	if user_is_online(own_userid):
 		own_conn=get_socket_of_userid(own_userid)
 		send_data(own_conn,u'[ %s ]【系统消息】用户[ %s ]申请加入群[ %s|ID:%s ]\n同意：\naccept %s \n拒绝：\nreject %s' % (get_custom_time_string(),req_username,group_name,groupid,req_id,req_id))
 
@@ -665,7 +685,7 @@ def exit_group(conn,args):
 
 	#判断群主是否在在线，在线直接发送退群提醒，如果不在线，把退群消息加入到user_notice	
 	notice_content=u'[ %s ]\n【系统消息】用户[ %s ]退出群[ %s |ID号:%s] ' % (get_custom_time_string(),req_username,group_name,groupid)
-	if userid_is_online(own_userid):
+	if user_is_online(own_userid):
 		own_conn=get_socket_of_userid(own_userid)
 		send_data(own_conn,notice_content)
 	else:
@@ -736,7 +756,7 @@ def accept_request(conn,args):
 			send_data(conn,u'[ %s ]\n【系统消息】您已同意用户[ %s ]加入群[ %s|ID:%s ]!' %(get_custom_time_string(),get_name_of_userid(req_userid),group_name,groupid) )
 
 	#判断该请求的用户是否在线，如果在线直接提醒用户，不在线插入提醒信息到数据库
-	if userid_is_online(req_userid):
+	if user_is_online(req_userid):
 		req_conn=get_socket_of_userid(req_userid)
 		send_data(req_conn,notice_content)
 	else:
@@ -795,7 +815,7 @@ def reject_requset(conn,args):
 			send_data(conn,u'[ %s ]【系统提示】您已拒绝用户[ %s ]加入群[ %s|ID:%s ]的请求!' % (get_custom_time_string(),get_name_of_userid(req_userid),group_name,groupid) )
 
 	#判断用户是否在线，如果在线直接提醒用户，不在线插入提醒信息到数据库
-	if userid_is_online(req_userid):
+	if user_is_online(req_userid):
 		req_conn=get_socket_of_userid(req_userid)
 		send_data(req_conn,notice_content)
 	else:
@@ -821,7 +841,7 @@ def list_friends(conn,args):
 			friend_username=r[1]
 			friend_info="- "+friend_username
 			#判断是否在线
-			if userid_is_online(friend_userid):
+			if user_is_online(friend_userid):
 				friend_info+='(在线)'
 			else:
 				friend_info+='(离线)'
@@ -928,7 +948,7 @@ def list_group_users(conn,args):
 				mem_info+='[成员]'	
 
 			#判断是否在线
-			if userid_is_online(mem_userid):
+			if user_is_online(mem_userid):
 				mem_info+='(在线)'
 			else:
 				mem_info+='(离线)'
@@ -1042,7 +1062,7 @@ def kickout_group_user(conn,args):
 		else:
 			notice_content='[ %s ]\n【群消息】用户[ %s ]已被群主[ %s ]移出群[ %s|ID:%s ]!' % (get_custom_time_string(),to_username,own_username,groupname,groupid)
 		#判断用户是否在线
-		if userid_is_online(notice_userid):
+		if user_is_online(notice_userid):
 			notice_conn=get_socket_of_userid(notice_userid)
 			send_data(notice_conn,notice_content)
 		else:
@@ -1083,7 +1103,7 @@ def delete_group(conn,args):
 			to_userid=r[0]
 			notice_content='[ %s ]\n【系统消息】 群主已解散群[ %s|ID:%s ]!' % (get_custom_time_string(),group_name,groupid)
 			#判断用户是否在线
-			if userid_is_online(to_userid):
+			if user_is_online(to_userid):
 				to_conn=get_socket_of_userid(to_userid)
 				send_data(to_conn,notice_content)
 			else:
@@ -1187,7 +1207,7 @@ def no_speak_group_user(conn,args):
 		else:
 			notice_content='[ %s ]\n【系统消息】用户[ %s ]已被群[ %s|ID:%s ]的群主[ %s ]禁言!' % (get_custom_time_string(),to_username,groupname,groupid,own_username)
 		#判断用户是否在线
-		if userid_is_online(notice_userid):
+		if user_is_online(notice_userid):
 			notice_conn=get_socket_of_userid(notice_userid)
 			send_data(notice_conn,notice_content)
 		else:
@@ -1257,7 +1277,7 @@ def speak_user(conn,args):
 		else:
 			notice_content='[ %s ]\n【系统消息】用户[ %s ]已被群[ %s|ID:%s ]的群主[ %s ]取消禁言!' % (get_custom_time_string(),to_username,groupname,groupid,own_username)
 		#判断用户是否在线
-		if userid_is_online(notice_userid):
+		if user_is_online(notice_userid):
 			notice_conn=get_socket_of_userid(notice_userid)
 			send_data(notice_conn,notice_content)
 		else:
@@ -1310,7 +1330,7 @@ def no_speak_group(conn,args):
 		notice_userid=r[0]
 		notice_content='[ %s ]\n【系统消息】群[ %s|ID:%s ]已被群主[ %s ]禁言!' % (get_custom_time_string(),groupname,groupid,own_username)
 		#判断用户是否在线
-		if userid_is_online(notice_userid):
+		if user_is_online(notice_userid):
 			notice_conn=get_socket_of_userid(notice_userid)
 			send_data(notice_conn,notice_content)
 		else:
@@ -1363,7 +1383,7 @@ def speak_group(conn,args):
 		notice_userid=r[0]
 		notice_content='[ %s ]\n【系统消息】群[ %s|ID:%s ]已被群主[ %s ]取消禁言!' % (get_custom_time_string(),groupname,groupid,own_username)
 		#判断用户是否在线
-		if userid_is_online(notice_userid):
+		if user_is_online(notice_userid):
 			notice_conn=get_socket_of_userid(notice_userid)
 			send_data(notice_conn,notice_content)
 		else:
