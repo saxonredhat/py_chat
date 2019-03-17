@@ -135,8 +135,8 @@ def get_userid_of_socket(sock):
 
 #获取userid对应的socket
 def get_socket_of_userid(userid):
-	if userid in userid_to_socket.keys():
-		return userid_to_socket[userid]
+	if int(userid) in userid_to_socket.keys():
+		return userid_to_socket[int(userid)]
 
 #判断
 def user_is_online(userid):
@@ -146,7 +146,8 @@ def user_is_online(userid):
 
 #删除字典userid_to_socket中对应键值
 def del_userid_to_socket(sock):
-	if get_userid_of_socket(sock):
+	userid=get_userid_of_socket(sock)
+	if userid:
 		del userid_to_socket[userid]
 
 #转换发送的数据成二进制数据并发送
@@ -247,7 +248,7 @@ def user_is_friend_of_user(userid,userid2):
 	return True
 
 def user_is_exists_add_user_request(userid,userid2):
-	sql='select id from user_req where userid=%s and to_userid=%s and type=1 and status=0' % (userid,userid2)
+	sql='select id from user_req where userid=%s and add_userid=%s and type=1 and status=0' % (userid,userid2)
 	if sql_query(sql):
 		return True
 	return False
@@ -288,7 +289,7 @@ def get_counts_of_group(groupid):
 	return sql_query(sql)[0][0]
 
 def get_create_group_limits_of_userid(userid):
-	sql='select group_limits from user where id=%s' % userid 
+	sql='select groups_limit from user where id=%s' % userid 
 	return sql_query(sql)[0][0]
 
 def get_has_group_counts_of_userid(userid):
@@ -523,22 +524,24 @@ def request_add_friend(sock,args_list):
 		send_data(sock,u"【系统提示】您和用户[ %s|UID:%s ]已经是好友关系，不需要再次添加" % (to_username,to_userid))
 		return
 
-
 	if user_is_exists_add_user_request(req_userid,to_userid):
 		send_data(sock,u"【系统提示】您已经向[ %s|UID:%s ]发送过好友申请，无需再次发送" % (to_username,to_userid)) 
 		return
 	
-	to_sock=get_socket_of_userid(to_userid)
 	sql='insert into user_req(userid,type,add_userid,status,created_at) values(%s,1,%s,0,now())' % (req_userid,to_userid)
 	sql_dml(sql)
+	send_data(sock,u'[ %s ]【系统消息】已向该用户[ %s|UID:%s ]发送添加好友申请' % (get_custom_time_string(),to_username,to_userid))
+
+	to_sock=get_socket_of_userid(to_userid)
+	print("sock",to_sock)
 	if to_sock:
+		print("在线")
 		sql='select id from user_req where userid=%s and add_userid=%s and status=0 LIMIT 1' %  (req_userid,to_userid)
 		res=sql_query(sql)
 		if not res:
 			return
 		req_id=res[0][0]
 		send_data(to_sock,u"[ %s ]【系统消息】用户[ %s|UID:%s ]向您申请添加好友请求!\n同意：\naccept %s \n拒绝：\nreject %s" % (get_custom_time_string(),req_username,req_userid,req_id,req_id))
-	send_data(sock,u'[ %s ]【系统消息】已向该用户[ %s|UID:%s ]发送添加好友申请' % (get_custom_time_string(),to_username,to_userid))
 
 def delete_friend(sock,args_list):
 	if len(args_list)!=1:
@@ -711,10 +714,14 @@ def handler_request(sock,args_list,is_accept=1):
 
 			send_data(sock,u'[ %s ]\n【系统消息】您已同意添加用户[ %s|UID:%s ]为好友' % (get_custom_time_string(),add_username,add_userid))
 			notice_content=u'[ %s ]\n【系统消息】用户[ %s|UID:%s ]已经同意添加您为好友!' % (get_custom_time_string(),add_username,add_userid)
+			#更新redis
+			r_key=KV_USERID_ISFRIEND_USERID % (req_userid,add_userid)
+			r_redis.delete(r_key)
+			r_key=KV_USERID_ISFRIEND_USERID % (add_userid,req_userid)
+			r_redis.delete(r_key)
 		else:
 			send_data(sock,u'[ %s ]\n【系统消息】您已拒绝用户[ %s|UID:%s ]加好友请求！' % (get_custom_time_string(),add_username,add_userid))
 			notice_content=u'[ %s ]\n【系统消息】用户[ %s|UID:%s ]已经拒绝您的好友申请!' % (get_custom_time_string(),add_username,add_userid)
-		#更新redis
 
 	#加群
 	if req_type == 2 and add_groupid:
@@ -734,6 +741,11 @@ def handler_request(sock,args_list,is_accept=1):
 			sql_dml(sql)
 			send_data(sock,u'[ %s ]\n【系统消息】您已同意用户[ %s|UID:%s ]加入群[ %s|GID:%s ]!' %(get_custom_time_string(),req_username,req_userid,groupname,add_groupid))
 			notice_content=u"[ %s ]\n【系统消息】群主[ %s|UID:%s ]已经同意你加入群[ %s|GID:%s ]!" % (get_custom_time_string(),own_username,own_userid,groupname,add_groupid)
+			#更新redis
+			r_key=KV_USERID_IN_GROUPID % (req_userid,add_groupid)
+			r_redis.delete(r_key)
+			r_key=LIST_USERIDS_OF_GROUPID % add_groupid
+			r_redis.delete(r_key)
 		else:
 			send_data(sock,u'[ %s ]\n【系统消息】您已拒绝用户[ %s|UID:%s ]申请加群[ %s|GID:%s ]的请求!' %(get_custom_time_string(),req_username,req_userid,groupname,add_groupid))
 			notice_content=u"[ %s ]\n【系统消息】群主[ %s|UID:%s ]已经拒绝加群[ %s|GID:%s ]请求!" % (get_custom_time_string(),own_username,own_userid,groupname,add_groupid)
@@ -751,10 +763,10 @@ def handler_request(sock,args_list,is_accept=1):
 	sql='update user_req set status=1 where id=%s' % req_id
 	sql_dml(sql)
 
-def accept_requset(sock,args_list):
+def accept_request(sock,args_list):
 	handler_request(sock,args_list,1)
 
-def reject_requset(sock,args_list):
+def reject_request(sock,args_list):
 	handler_request(sock,args_list,0)
 
 def list_friends(sock,args_list):
@@ -878,18 +890,19 @@ def create_group(sock,args_list):
 	groupname=args_list[0]
 
 	#判断该用户的群是否已经达到上限	
-	has_group_counts=get_has_group_counts_of_userid(userid)
-	create_group_limits=get_create_group_limits_of_userid(userid)
+	has_group_counts=get_has_group_counts_of_userid(create_userid)
+	create_group_limits=get_create_group_limits_of_userid(create_userid)
 	if has_group_counts >= create_group_limits:
 		send_data(sock,u'【系统提示】您创建的群数量已达上限数为%s,当前拥有群数为%s' % (create_group_limits,has_group_counts))
 		return
 
 	#建群
-	sql='insert into `group`(name,create_userid,is_empty,created_at) values("%s",%s,0,now())' % (groupname,create_userid)
+	sql='insert into `group`(name,own_userid,is_empty,created_at) values("%s",%s,0,now())' % (groupname,create_userid)
 	create_group_result=sql_dml(sql)
 
 	#获取刚创立的群id
-	sql='select id from `group` where create_userid=%s and is_empty=0' % create_userid;
+	sql='select id from `group` where own_userid=%s and is_empty=0' % create_userid;
+	res=sql_query(sql)
 	groupid=res[0][0]
 
 	#把当前用户加到群内
@@ -899,9 +912,9 @@ def create_group(sock,args_list):
 	sql='update `group` set is_empty=1 where id=%s' % groupid
 	sql_dml(sql)
 	if create_group_result:
-		send_data(sock,u'【系统消息】群[ %s|GID:%s ]已经创建完成!' % (get_custom_time_string(),groupname,groupid))
+		send_data(sock,u'【系统消息】群[ %s|GID:%s ]已经创建完成!' % (groupname,groupid))
 	else:
-		send_data(sock,u'【系统消息】群[ %s ]已经创建失败!' % (get_custom_time_string(),groupname))
+		send_data(sock,u'【系统消息】群[ %s ]已经创建失败!' % (groupname))
 
 def kickout_group_user(sock,args_list):
 	if len(args_list)!=2:
@@ -1021,9 +1034,9 @@ def delete_group(sock,args_list):
 		r_redis.delete(r_key)
 	###结束更新redis###
 
+	notice_content='[ %s ]\n【系统消息】 群[ %s|GID:%s ]已解散!' % (get_custom_time_string(),groupname,groupid)
 	#获取群用户，发送删群提示
 	for group_userid in group_userids_list:
-		send_data(sock,'[ %s ]\n【系统消息】 群[ %s|GID:%s ]已解散!' % (get_custom_time_string(),groupname,groupid))
 		if user_is_online(group_userid):
 			to_sock=get_socket_of_userid(group_userid)
 			send_data(to_sock,notice_content)
@@ -1420,8 +1433,8 @@ def handle_epollout(fd,c_sock):
 				'exg': exit_group,
 				'kickout': kickout_group_user,
 				'ko': kickout_group_user,
-				'reject': reject_requset,
-				'rj': reject_requset,
+				'reject': reject_request,
+				'rj': reject_request,
 				'accept': accept_request,
 				'ac': accept_request,
 				'listfriends': list_friends,
