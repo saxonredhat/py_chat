@@ -83,14 +83,14 @@ cmd_help="""
 	|infouser/iu         UID     (显示用户信息)     |
 	|adduser/au          UID     (添加好友)         |
 	|deluser/du          UID     (删除好友)         |
-	|creategroup/cg      GNAME   (建群)             |
+	|creategroup/cg      NAME    (建群)             |
 	|delgroup/dg         GID     (删群)             |
 	|entergroup/eng      GID     (加群)             |
 	|exitgroup/exg       GID     (退群)             |
 	|nospkgroup/nsg      GID     (禁言群)           |
 	|spkgroup/sg         GID     (取消禁言群)       |
-	|reject/rj           RID     (同意加好友|进群)  |
-	|accept/ac           RID     (拒绝加好友|进群)  |
+	|reject/rj           RID     (同意请求)         |
+	|accept/ac           RID     (拒绝请求)         |
 	|listgroupusers/lgu  GID     (列出群成员信息)   |
 	|infouser/iu         UID     (显示用户信息)     |
 	 ===============================================
