@@ -14,6 +14,7 @@ import select
 import queue
 import ssl
 import redis
+from datetime import datetime
 
 #数据库配置
 db_config={
@@ -55,10 +56,10 @@ except:
 	port=8888
 
 #无参数命令
-noargs_cmd=['listfriends','lf','listgroups','lg','listallgroup','lag','close','logout']
+noargs_cmd=['listfriends','lf','listusers','lu','listgroups','lg','listallgroup','lag','infome','im','close','logout']
 
 #带参数命令
-args_cmd=['msg','m','gmsg','gm','addfriend','af','delfriend','df','entergroup','eng','exitgroup','exg','kickout','ko','reject','rj','accept','ac','creategroup','cg','delgroup','dg','listgroupusers','lgu','auth','echo','nospkuser','nsu','spkuser','su','nospkgroup','nsg','spkgroup','sg']
+args_cmd=['msg','m','gmsg','gm','addfriend','af','delfriend','df','entergroup','eng','exitgroup','exg','kickout','ko','reject','rj','accept','ac','creategroup','cg','delgroup','dg','listgroupusers','lgu','auth','echo','nospkuser','nsu','spkuser','su','nospkgroup','nsg','spkgroup','sg','infouser','iu']
 
 #命令帮助提示
 cmd_help="""
@@ -79,7 +80,7 @@ cmd_help="""
 	|命令                参数    (说明)             |
 	 ===============================================
 	|echo                MESSAGE (回显消息)         |
-	|infome/im           MESSAGE (回显消息)         |
+	|infouser/iu         UID     (显示用户信息)     |
 	|adduser/au          UID     (添加好友)         |
 	|deluser/du          UID     (删除好友)         |
 	|creategroup/cg      GNAME   (建群)             |
@@ -126,6 +127,11 @@ epoll=select.epoll()
 #获取自定义的时间string
 def get_custom_time_string(t_format="%Y-%m-%d %X"):
 	return time.strftime(t_format)
+
+#获取年龄
+def get_age(born):
+	today = datetime.today()
+	return today.year - born.year - ((today.month, today.day) < (born.month, born.day))
 
 #获取socket对应的userid
 def get_userid_of_socket(sock):
@@ -769,26 +775,36 @@ def accept_request(sock,args_list):
 def reject_request(sock,args_list):
 	handler_request(sock,args_list,0)
 
-def list_friends(sock,args_list):
-	userid=get_userid_of_socket(sock)
-	friends=[]	
-	sql='select u.id,u.username from user_users uu join user u on uu.friend_userid=u.id  where uu.userid=%s' % userid
+def list_users(sock,args_list,only_friend=0):
+	users_list=[]	
+	if only_friend == 1:
+		userid=get_userid_of_socket(sock)
+		sql='select u.id,u.username from user_users uu join user u on uu.friend_userid=u.id  where uu.userid=%s' % userid
+	else:
+		sql='select id,username from user'
 	res=sql_query(sql)
 	for r in res:
-		friend_userid=r[0]
-		friend_username=r[1]
-		friend_info='- [ %s|UID:%s ]' % (friend_username,friend_userid)
-		if user_is_online(friend_userid):
-			friend_info+='(在线)'
+		user_userid=r[0]
+		user_username=r[1]
+		user_info='- [ %s|UID:%s ]' % (user_username,user_userid)
+		if user_is_online(user_userid):
+			user_info+='(在线)'
 		else:
-			friend_info+='(离线)'
-		friends.append(friend_info)
+			user_info+='(离线)'
+		users_list.append(user_info)
 
-	if friends:
-		firends_info_msg=u'当前好友列表:\n%s' % '\n'.join(friends)
+	if users_list:
+		if only_friend == 1:
+			users_info_msg=u'当前好友列表:\n%s' % '\n'.join(users_list)
+		else:
+			users_info_msg=u'当前系统用户列表:\n%s' % '\n'.join(users_list)
 	else:
-		 firends_info_msg=u'当前没有添加好友!'
-	send_data(sock,firends_info_msg)
+		users_info_msg=u'当前没有添加好友!'
+	send_data(sock,users_info_msg)
+
+def list_friends(sock,args_list):
+	list_users(sock,args_list,1)
+	
 
 def list_groups(sock,args_list):
 	userid=get_userid_of_socket(sock)
@@ -1044,6 +1060,35 @@ def delete_group(sock,args_list):
 			notice_sql='insert into user_notice(userid,content,status,created_at) values(%s,"%s",0,now())' % (group_userid,notice_content)
 			sql_dml(notice_sql)
 	
+
+#显示当前用户信息
+def show_me_info(sock,args_list,input_userid=-1):
+	if input_userid>0:
+		show_userid=input_userid
+	else:
+		show_userid=get_userid_of_socket(sock)
+	sql='select id,username,sex,birthday,address,profile,ulevel,created_at from user where id=%s' % show_userid
+	res=sql_query(sql)
+	userid=res[0][0]
+	username=res[0][1]
+	sex=(u'女' if (res[0][2]== 0) else u'男')
+	age=get_age(res[0][3])
+	address=( '-' if not res[0][4] else res[0][4])
+	profile=( '-' if not res[0][5] else res[0][5])
+	ulevel=res[0][6]
+	created_at=res[0][7]
+	me_info='用户个人信息\n姓　　名：%s ( UID:%s )\n性　　别：%s\n年　　龄：%s\n地　　址：%s\n个人简介：%s\n等　　级：%s\n申请时间：%s\n' % (username,userid,sex,age,address,profile,ulevel,created_at)
+	send_data(sock,me_info)
+
+def show_user_info(sock,args_list):
+	if len(args_list)!=1:
+		send_data(sock,u'【系统提示】显示用户信息参数错误!')
+		return	
+	userid=args_list[0]
+	if not userid_is_exists(userid):
+		send_data(sock,u"【系统提示】用户UID[ %s ]不存在!" % userid)
+		return
+	show_me_info(sock,args_list,int(userid))
 
 #禁言组用户
 def nospeak_group_user(sock,args_list,is_nospeak_group_user=1):
@@ -1423,6 +1468,10 @@ def handle_epollout(fd,c_sock):
 				'm': send_user_message,
 				'gmsg': send_group_message,
 				'gm': send_group_message,
+				'infome': show_me_info,
+				'im': show_me_info,
+				'infouser': show_user_info,
+				'iu': show_user_info,
 				'addfriend': request_add_friend,
 				'af': request_add_friend,
 				'delfriend': delete_friend,
@@ -1439,6 +1488,8 @@ def handle_epollout(fd,c_sock):
 				'ac': accept_request,
 				'listfriends': list_friends,
 				'lf': list_friends,
+				'listusers': list_users,
+				'lu': list_users,
 				'listgroups': list_groups,
 				'lg': list_groups,
 				'listallgroup': list_all_groups,
