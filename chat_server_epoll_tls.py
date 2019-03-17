@@ -498,7 +498,7 @@ def send_group_message(sock,args_list):
 			r_key=LIST_GROUPMESSAGES_OF_USERID_IN_GROUPID % (groupid,to_userid)
 			r_redis.rpush(r_key,group_message)
 
-def handler_friend(sock,args_list,handler_type=0):
+def request_add_friend(sock,args_list):
 	if len(args_list)!=1:
 		send_data(sock,u'【系统提示】添加/删除好友的命令错误!')
 		return
@@ -514,12 +514,8 @@ def handler_friend(sock,args_list,handler_type=0):
 		return
 
 	#判断是否添加的是自己
-	if req_userid == to_userid and handler_type==0:
+	if req_userid == to_userid:
 		send_data(sock,u"【系统提示】无需添加自己为好友!")
-		return 
-
-	if req_userid == to_userid and handler_type==1:
-		send_data(sock,u"【系统提示】无法删除自己!")
 		return 
 
 	#判断是否已经添加为好友,或者是否已经存在申请请求
@@ -544,9 +540,6 @@ def handler_friend(sock,args_list,handler_type=0):
 		send_data(to_sock,u"[ %s ]【系统消息】用户[ %s|UID:%s ]向您申请添加好友请求!\n同意：\naccept %s \n拒绝：\nreject %s" % (get_custom_time_string(),req_username,req_userid,req_id,req_id))
 	send_data(sock,u'[ %s ]【系统消息】已向该用户[ %s|UID:%s ]发送添加好友申请' % (get_custom_time_string(),to_username,to_userid))
 
-def add_friend(sock,args_list):
-	handler_friend(sock,args_list,1)
-	pass
 def delete_friend(sock,args_list):
 	if len(args_list)!=1:
 		send_data(sock,u'【系统提示】删除好友的命令错误!')
@@ -590,7 +583,7 @@ def delete_friend(sock,args_list):
 		sql_dml(notice_sql)
 	
 
-def enter_group(sock,args_list):
+def request_enter_group(sock,args_list):
 	if len(args_list)!=1:
 		send_data(sock,u'【系统提示】加群的操作参数错误')
 		return
@@ -1417,12 +1410,12 @@ def handle_epollout(fd,c_sock):
 				'm': send_user_message,
 				'gmsg': send_group_message,
 				'gm': send_group_message,
-				'addfriend': add_friend,
-				'af': add_friend,
+				'addfriend': request_add_friend,
+				'af': request_add_friend,
 				'delfriend': delete_friend,
 				'df': delete_friend,
-				'entergroup': enter_group,
-				'eng': enter_group,
+				'entergroup': request_enter_group,
+				'eng': request_enter_group,
 				'exitgroup': exit_group,
 				'exg': exit_group,
 				'kickout': kickout_group_user,
