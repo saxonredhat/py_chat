@@ -681,7 +681,7 @@ def exit_group(sock,args_list):
 
 def handler_request(sock,args_list,is_accept=1):
 	if len(args_list)!=1:
-		send_data(sock,u'【系统提示】同意请求的操作参数错误')
+		send_data(sock,u'【系统提示】接收/拒绝请求的操作参数错误')
 		return	
 	accept_userid=get_userid_of_socket(sock)
 	req_id=args_list[0]
@@ -698,20 +698,24 @@ def handler_request(sock,args_list,is_accept=1):
 	#判断是加群还是添加好友 
 	#加好友
 	if req_type == 1 and add_userid:
-		print(type(accept_userid),type(add_userid))
 		if accept_userid != add_userid:
 			send_data(sock,u'【系统提示】您无权执行该操作!')
 			return 
 		add_username=get_username_of_userid(add_userid)
 			
-		#互加好友操作
-		sql='insert into user_users(userid,friend_userid,created_at) values(%s,%s,now())' % (req_userid,add_userid)
-		sql_dml(sql)
-		sql='insert into user_users(userid,friend_userid,created_at) values(%s,%s,now())' % (add_userid,req_userid)
-		sql_dml(sql)
+		if is_accept==1:
+			#互加好友操作
+			sql='insert into user_users(userid,friend_userid,created_at) values(%s,%s,now())' % (req_userid,add_userid)
+			sql_dml(sql)
+			sql='insert into user_users(userid,friend_userid,created_at) values(%s,%s,now())' % (add_userid,req_userid)
+			sql_dml(sql)
 
-		send_data(sock,u'[ %s ]\n【系统消息】您已同意添加用户[ %s|UID:%s ]为好友' % (get_custom_time_string(),add_username,add_userid))
-		notice_content=u'[ %s ]\n【系统消息】用户[ %s|UID:%s ]已经同意添加您为好友!' % (get_custom_time_string(),add_username,add_userid)
+			send_data(sock,u'[ %s ]\n【系统消息】您已同意添加用户[ %s|UID:%s ]为好友' % (get_custom_time_string(),add_username,add_userid))
+			notice_content=u'[ %s ]\n【系统消息】用户[ %s|UID:%s ]已经同意添加您为好友!' % (get_custom_time_string(),add_username,add_userid)
+		else:
+			send_data(sock,u'[ %s ]\n【系统消息】您已拒绝用户[ %s|UID:%s ]加好友请求！' % (get_custom_time_string(),add_username,add_userid))
+			notice_content=u'[ %s ]\n【系统消息】用户[ %s|UID:%s ]已经拒绝您的好友申请!' % (get_custom_time_string(),add_username,add_userid)
+		#更新redis
 
 	#加群
 	if req_type == 2 and add_groupid:
@@ -725,12 +729,16 @@ def handler_request(sock,args_list,is_accept=1):
 			send_data(sock,u'【系统提示】您非该群的群主，无权执行该操作!')
 			return 
 		
-		#把用户加入群
-		sql='insert into group_users(userid,groupid,created_at) values(%s,%s,now())' % (req_userid,add_groupid)
-		sql_dml(sql)
-
-		send_data(sock,u'[ %s ]\n【系统消息】您已同意用户[ %s|UID:%s ]加入群[ %s|GID:%s ]!' %(get_custom_time_string(),req_username,req_userid,groupname,add_groupid))
-		notice_content=u"[ %s ]\n【系统消息】群主[ %s|UID:%s ]已经同意你加入群[ %s|GID:%s ]!" % (get_custom_time_string(),own_username,own_userid,groupname,add_groupid)
+		if is_accept==1:
+			#把用户加入群
+			sql='insert into group_users(userid,groupid,created_at) values(%s,%s,now())' % (req_userid,add_groupid)
+			sql_dml(sql)
+			send_data(sock,u'[ %s ]\n【系统消息】您已同意用户[ %s|UID:%s ]加入群[ %s|GID:%s ]!' %(get_custom_time_string(),req_username,req_userid,groupname,add_groupid))
+			notice_content=u"[ %s ]\n【系统消息】群主[ %s|UID:%s ]已经同意你加入群[ %s|GID:%s ]!" % (get_custom_time_string(),own_username,own_userid,groupname,add_groupid)
+		else:
+			send_data(sock,u'[ %s ]\n【系统消息】您已拒绝用户[ %s|UID:%s ]申请加群[ %s|GID:%s ]的请求!' %(get_custom_time_string(),req_username,req_userid,groupname,add_groupid))
+			notice_content=u"[ %s ]\n【系统消息】群主[ %s|UID:%s ]已经拒绝加群[ %s|GID:%s ]请求!" % (get_custom_time_string(),own_username,own_userid,groupname,add_groupid)
+		#更新redis
 
 	#判断该请求的用户是否在线，如果在线直接提醒用户，不在线插入提醒信息到数据库
 	if user_is_online(req_userid):
@@ -749,57 +757,6 @@ def accept_requset(sock,args_list):
 
 def reject_requset(sock,args_list):
 	handler_request(sock,args_list,0)
-	if len(args_list)!=1:
-		send_data(sock,u'【系统提示】拒绝请求的操作参数错误')
-		return	
-	reject_userid=get_userid_of_socket(sock)
-	req_id=args_list[0]
-	sql='select id,type,userid,add_userid,add_groupid from user_req where id=%s and status=0' % req_id
-	res=sql_query(sql)
-	if not res:
-		send_data(sock,u'【系统提示】请求的RID号[ %s ]不存在' % req_id)
-		return
-	req_type=res[0][1]
-	req_userid=res[0][2]
-	add_userid=res[0][3]
-	add_groupid=res[0][4]
-
-	#如果是添加好友 
-	if req_type == 1 and add_userid:
-		if reject_userid != add_userid:
-			send_data(sock,u'【系统提示】您无权执行该操作!')
-			return 
-
-		add_username=get_username_of_userid(add_userid)
-		send_data(sock,u'[ %s ]\n【系统消息】您已拒绝用户[ %s|UID:%s ]加好友请求！' % (get_custom_time_string(),add_username,add_userid))
-		notice_content=u'[ %s ]\n【系统消息】用户[ %s|UID:%s ]已经拒绝您的好友申请!' % (get_custom_time_string(),add_username,add_userid)
-
-	#如果是添加群
-	if req_type == 2 and add_groupid:
-		req_username=get_username_of_userid(req_userid)
-		own_userid=get_own_userid_of_groupid(add_groupid)
-		own_username=get_username_of_userid(own_userid)
-		groupname=get_groupname_of_groupid(add_groupid)
-
-		if reject_userid != own_userid:
-			send_data(sock,u'【系统提示】您非该群的群主，无权执行该操作!')
-			return 
-
-		send_data(sock,u'[ %s ]\n【系统消息】您已拒绝用户[ %s|UID:%s ]申请加群[ %s|GID:%s ]的请求!' %(get_custom_time_string(),req_username,req_userid,groupname,add_groupid))
-		notice_content=u"[ %s ]\n【系统消息】群主[ %s|UID:%s ]已经拒绝加群[ %s|GID:%s ]请求!" % (get_custom_time_string(),own_username,own_userid,groupname,add_groupid)
-
-	#判断用户是否在线，如果在线直接提醒用户，不在线插入提醒信息到数据库
-	if user_is_online(req_userid):
-		req_sock=get_socket_of_userid(req_userid)
-		send_data(req_sock,notice_content)
-	else:
-		notice_sql='insert into user_notice(userid,content,status,created_at) values(%s,"%s",0,now())' % (req_userid,notice_content)
-		sql_dml(notice_sql)
-
-	#更新请求状态
-	sql='update user_req set status=1 where id=%s' % req_id
-	sql_dml(sql)
-		
 
 def list_friends(sock,args_list):
 	userid=get_userid_of_socket(sock)
