@@ -679,7 +679,7 @@ def exit_group(sock,args_list):
 		notice_sql='insert into user_notice(userid,content,status,created_at) values(%s,"%s",0,now())' % (own_userid,notice_content)
 		sql_dml(notice_sql)
 
-def accept_request(sock,args_list):
+def handler_request(sock,args_list,is_accept=1):
 	if len(args_list)!=1:
 		send_data(sock,u'【系统提示】同意请求的操作参数错误')
 		return	
@@ -744,7 +744,11 @@ def accept_request(sock,args_list):
 	sql='update user_req set status=1 where id=%s' % req_id
 	sql_dml(sql)
 
+def accept_requset(sock,args_list):
+	handler_request(sock,args_list,1)
+
 def reject_requset(sock,args_list):
+	handler_request(sock,args_list,0)
 	if len(args_list)!=1:
 		send_data(sock,u'【系统提示】拒绝请求的操作参数错误')
 		return	
@@ -1208,7 +1212,7 @@ def nospeak_group(sock,args_list,is_group_forbidden_speaking=1):
 
 #取消禁言组
 def speak_group(sock,args_list):
-	no_speak_group(sock,args_list,0)
+	nospeak_group(sock,args_list,0)
 
 def close_clear_all(sock,fd):
 	print("清理客户端中...")
