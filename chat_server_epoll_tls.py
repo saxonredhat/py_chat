@@ -80,9 +80,9 @@ cmd_help="""
 	|命令                参数    (说明)             |
 	 ===============================================
 	|echo                MESSAGE (回显消息)         |
+	|addfriend/af        UID     (添加好友)         |
+	|delfriend/df        UID     (删除好友)         |
 	|infouser/iu         UID     (显示用户信息)     |
-	|adduser/au          UID     (添加好友)         |
-	|deluser/du          UID     (删除好友)         |
 	|creategroup/cg      NAME    (建群)             |
 	|delgroup/dg         GID     (删群)             |
 	|entergroup/eng      GID     (加群)             |
@@ -92,7 +92,6 @@ cmd_help="""
 	|reject/rj           RID     (同意请求)         |
 	|accept/ac           RID     (拒绝请求)         |
 	|listgroupusers/lgu  GID     (列出群成员信息)   |
-	|infouser/iu         UID     (显示用户信息)     |
 	 ===============================================
 	|命令                (说明)                     |
 	 ===============================================
@@ -720,11 +719,12 @@ def handler_request(sock,args_list,is_accept=1):
 
 			send_data(sock,u'[ %s ]\n【系统消息】您已同意添加用户[ %s|UID:%s ]为好友' % (get_custom_time_string(),add_username,add_userid))
 			notice_content=u'[ %s ]\n【系统消息】用户[ %s|UID:%s ]已经同意添加您为好友!' % (get_custom_time_string(),add_username,add_userid)
-			#更新redis
+			#开始更新redis
 			r_key=KV_USERID_ISFRIEND_USERID % (req_userid,add_userid)
 			r_redis.delete(r_key)
 			r_key=KV_USERID_ISFRIEND_USERID % (add_userid,req_userid)
 			r_redis.delete(r_key)
+			#结束更新redis
 		else:
 			send_data(sock,u'[ %s ]\n【系统消息】您已拒绝用户[ %s|UID:%s ]加好友请求！' % (get_custom_time_string(),add_username,add_userid))
 			notice_content=u'[ %s ]\n【系统消息】用户[ %s|UID:%s ]已经拒绝您的好友申请!' % (get_custom_time_string(),add_username,add_userid)
@@ -1327,7 +1327,7 @@ def handle_epollin(fd,c_sock):
 					login_ok=u'echo 登录成功!'
 					fd_to_message_queue[fd].put(login_ok)
 					try:
-						print("[ %s ]开始修改epollout!" % time.ctime())
+						print("[ %s ]开始epollout!" % time.ctime())
 						epoll.modify(fd,select.EPOLLOUT)	
 					except:
 						epoll.modify(fd,0)
@@ -1414,12 +1414,6 @@ def handle_epollout(fd,c_sock):
 		return
 	#如果已经登录则推送，获取队列中的内容，判断消息的类别，调用不同的函数处理
 	else:
-		#推送消息
-		if fd_to_cmd_count[fd]==0:
-			push_userid=get_userid_of_socket(c_sock)
-			if push_userid:
-				push_messages(c_sock,push_userid)
-		fd_to_cmd_count[fd]+=1
 		#获取队列中的内容
 		try:
 			message=fd_to_message_queue[fd].get_nowait()
@@ -1510,6 +1504,12 @@ def handle_epollout(fd,c_sock):
 				'su': speak_group_user
 			}
 			switch[cmd](c_sock,args)
+		#推送消息
+		if fd_to_cmd_count[fd]==0:
+			push_userid=get_userid_of_socket(c_sock)
+			if push_userid:
+				push_messages(c_sock,push_userid)
+		fd_to_cmd_count[fd]+=1
 		try:
 			epoll.modify(fd,select.EPOLLIN)
 		except:
@@ -1621,8 +1621,6 @@ def start_chat_server():
 				events=epoll.poll(10)
 				if not events:
 					continue
-				#print("有"+str(len(events))+"个新事件，开始处理......")
-				#如果有事件发生,迭代读取事件,并且处理事件
 				for fd,event in events: 
 					c_sock=fd_to_socket[fd]
 					#判断是否为服务器监听的socket
