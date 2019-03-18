@@ -1362,7 +1362,8 @@ def handle_epollin(fd,c_sock):
 			err_msg=u'echo 数据包异常'
 			fd_to_message_queue[fd].put(err_msg)
 			epoll.modify(fd,0)
-			fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
+			close_clear_all(c_sock,fd)
+			#fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 			return
 		#判断包头字段里填入的长度和实际收到的是否一致	
 		if len(data)!=length:
