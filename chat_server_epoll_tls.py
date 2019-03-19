@@ -201,8 +201,8 @@ def userid_is_exists(userid):
 	if not r_redis.exists(r_key):
 		sql='select id from user where id=%s' % userid 
 		if not sql_query(sql):
-			r_redis.set(r_key,"")
 			return False
+		r_redis.set(r_key,"")
 	return True
 
 def groupid_is_exists(groupid):
@@ -212,6 +212,7 @@ def groupid_is_exists(groupid):
 		sql='select id from `group` where id=%s' % groupid
 		if not sql_query(sql):
 			return False
+		r_redis.set(r_key,"")
 	return True
 
 def get_username_of_userid(userid):
@@ -282,11 +283,14 @@ def get_own_userid_of_groupid(groupid):
 def userid_is_exists_in_group(userid,groupid):
 	r_key=KV_USERID_IN_GROUPID % (userid,groupid)
 	if not r_redis.exists(r_key):
-		sql='select id from group_users where groupid=%s and userid=%s' % (groupid,userid)
-		res=sql_query(sql)
-		if not res:
-			return False 
-		r_redis.set(r_key,"")
+		try:
+			sql='select id from group_users where groupid=%s and userid=%s' % (int(groupid),int(userid))
+			res=sql_query(sql)
+			if not res:
+				return False 
+			r_redis.set(r_key,"")
+		except:
+			return False
 	return True 
 
 def get_counts_of_group(groupid):
