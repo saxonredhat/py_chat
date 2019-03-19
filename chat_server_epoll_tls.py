@@ -199,33 +199,42 @@ def sql_dml(sql):
 def userid_is_exists(userid):
 	r_key=KV_EXISTS_USERID % userid 
 	if not r_redis.exists(r_key):
-		sql='select id from user where id=%s' % userid 
-		if not sql_query(sql):
+		try:
+			sql='select id from user where id=%s' % int(userid)
+			if not sql_query(sql):
+				return False
+			r_redis.set(r_key,"")
+		except:
 			return False
-		r_redis.set(r_key,"")
 	return True
 
 def groupid_is_exists(groupid):
 	#读取redis
 	r_key=KV_EXISTS_GROUPID % groupid
 	if not r_redis.exists(r_key):
-		sql='select id from `group` where id=%s' % groupid
-		if not sql_query(sql):
+		try:
+			sql='select id from `group` where id=%s' % int(groupid)
+			if not sql_query(sql):
+				return False
+			r_redis.set(r_key,"")
+		except:
 			return False
-		r_redis.set(r_key,"")
 	return True
 
 def get_username_of_userid(userid):
 	#读取redis
 	r_key=KV_USERID_GET_USERNAME % userid	
 	if not r_redis.exists(r_key):
-		sql='select username from user where id=%s' % userid
-		res=sql_query(sql)
-		if res:
-			q_username=res[0][0]
-			r_redis.set(r_key,q_username)
-			return q_username 
-		return ''
+		try:
+			sql='select username from user where id=%s' % int(userid)
+			res=sql_query(sql)
+			if res:
+				q_username=res[0][0]
+				r_redis.set(r_key,q_username)
+				return q_username 
+			return ''
+		except:
+			return ''
 	else:
 		return r_redis.get(r_key).decode('utf-8')
 
@@ -234,23 +243,29 @@ def get_groupname_of_groupid(groupid):
 	if r_redis.exists(r_key) and r_redis.get(r_key):
 		groupname=r_redis.get(r_key).decode('utf-8')
 	else:
-		sql='select name from `group` where id=%s' % groupid
-		res=sql_query(sql)
-		if res:
-			groupname=res[0][0]
-			r_redis.set(r_key,groupname)	
-		else:
-			groupname=''
+		try:
+			sql='select name from `group` where id=%s' % int(groupid)
+			res=sql_query(sql)
+			if res:
+				groupname=res[0][0]
+				r_redis.set(r_key,groupname)	
+			else:
+				groupname=''
+		except:
+			return ''
 	return groupname
 
 def user_is_friend_of_user(userid,userid2):
 	r_key=KV_USERID_ISFRIEND_USERID % (userid,userid2)
 	if not r_redis.exists(r_key):
-		sql='select userid from user_users where userid=%s and friend_userid=%s' % (userid,userid2)
-		res=sql_query(sql)
-		if not res:
-			return False 
-		r_redis.set(r_key,"")
+		try:
+			sql='select userid from user_users where userid=%s and friend_userid=%s' % (int(userid),int(userid2))
+			res=sql_query(sql)
+			if not res:
+				return False 
+			r_redis.set(r_key,"")
+		except:
+			return False
 	return True
 
 def user_is_exists_add_user_request(userid,userid2):
@@ -1366,7 +1381,10 @@ def handle_epollin(fd,c_sock):
 			err_msg=u'echo 数据包异常'
 			fd_to_message_queue[fd].put(err_msg)
 			epoll.modify(fd,0)
-			close_clear_all(c_sock,fd)
+			try:
+				fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
+			except:
+				close_clear_all(c_sock,fd)
 			#fd_to_socket[fd].shutdown(socket.SHUT_RDWR)
 			return
 		#判断包头字段里填入的长度和实际收到的是否一致	
