@@ -30,7 +30,6 @@ auth_userid_map_wstream={}
 auth_wstream_map_userid={}
 
 
-
 #mysql 配置
 db_config={
 	'host':'localhost',
@@ -45,7 +44,8 @@ db_config={
 #SQL 模板
 QUERY_AUTH_SQL='select id from user where id=%s and password=%s'
 QUERY_USERID_IS_EXISTS_SQL='select id from user where id=%s'
-QUERY_USERNAME_OF_USERID_SQL=''
+QUERY_USERNAME_OF_USERID_SQL='select username from user where id=%s'
+
 
 #redis配置
 redis_host='localhost'
@@ -54,6 +54,8 @@ redis_port=6379
 
 #redis KEY模板
 KV_EXISTS_USERID=u'kv_exists_userid:userid:%s'
+KV_USERID_GET_USERNAME=u'kv_userid_get_username:userid:%s'
+LIST_USERMESSAGES_OF_USERID=u'list_usermessages_of_userid:userid:%s'
 
 
 async def get_db_pool():
@@ -76,12 +78,12 @@ async def get_redis_pool():
 async def db_query(sql):
 	"""mysql执行查询操作"""
 	pool = await get_db_pool() 
-	results=[]
+	results=()
 	async with pool.acquire() as conn:
 		async with conn.cursor() as cur:
 			log.debug(f'查询数据库,SQL->[ {sql} ]')
 			await cur.execute(sql)
-			results = await cur.fetchone()
+			results = await cur.fetchall()
 	pool.close()
 	await pool.wait_closed()
 
@@ -106,6 +108,18 @@ async def redis_dml(cmd,*args):
 		await conn.execute(cmd,*args)
 	pool.close()
 	await pool.wait_closed()
+
+async def get_username_of_userid(userid):
+	if await redis_query('exists',KV_USERID_GET_USERNAME % userid):
+		username=await redis_query('get',KV_USERID_GET_USERNAME % userid)
+		return username.decode('utf-8')
+	else:
+		res=await db_query(QUERY_USERNAME_OF_USERID_SQL % userid)
+		if res:
+			username=res[0][0]
+			await redis_dml('set',KV_EXISTS_USERID % userid,username)
+			return username.decode('utf-8') 
+	return ''
 
 
 async def get_userid_of_wstream(wstream):
@@ -167,35 +181,15 @@ async def clean_wstream(writer):
 	writer.close()
 
 
-async def user_auth(writer,*args):
+async def user_auth(*args):
 	"""用户认证"""
-	if len(args) != 2:
-		msg='提示:认证格式: [ auth userid pwd ]'
-		await write_data(writer,msg)
-		return False
+	userid=int(args[0])
+	pwd=args[1]
 
-	try:
-		userid=int(args[0])
-	except:
-		msg='userid为整数!'
-		await write_data(writer,msg)
-		return False
-
-	password=args[1]
-
-	sql=QUERY_AUTH_SQL % (userid,password)
+	sql=QUERY_AUTH_SQL % (userid,pwd)
 	res=await db_query(sql)
 	if res:
-		#下线当前已登陆的用户
-		await offline_userid(userid)
-		auth_userid_map_wstream[userid]=writer
-		auth_wstream_map_userid[writer]=userid
-		msg='认证成功!'
-		await write_data(writer,msg)
 		return True
-
-	msg='认证失败!'
-	await write_data(writer,msg)
 
 	return False
 
@@ -222,8 +216,9 @@ async def userid_is_online(userid):
 		return False
 
 
-async def offline_userid(userid):
+async def offline_userid(*args):
 	"""下线用户"""
+	userid=int(args[0])
 	try:
 		writer=auth_userid_map_wstream[userid]
 
@@ -245,18 +240,7 @@ async def offline_userid(userid):
 
 async def send_user_msg(writer,*args):
 	"""发送用户消息"""
-	if len(args) < 2:
-		msg='提示:消息格式: [ msg userid content ]'
-		await write_data(writer,msg)
-		return
-	
-	try:
-		to_userid=int(args[0])
-	except:
-		msg='userid为整数!'
-		await write_data(writer,msg)
-		return
-
+	to_userid=int(args[0])
 	from_userid=auth_wstream_map_userid[writer]
 	content=' '.join(args[1:])
 
@@ -264,32 +248,84 @@ async def send_user_msg(writer,*args):
 		msg='系统不存在该userid!'	
 		await write_data(writer,msg)
 		return
-	send_content=f'[UID:{from_userid}->UID:{to_userid}]:'+content
+	from_username=await get_username_of_userid(from_userid)
+	to_username=await get_username_of_userid(to_userid)
+	send_content=f'[ {from_username}|UID:{from_userid} --> {to_username}|UID:{to_userid}]:'+content
 
 	if await userid_is_online(to_userid):
 		to_writer=auth_userid_map_wstream[to_userid]
 		if await write_data(to_writer,send_content):
 			await write_data(writer,send_content)
 			return 
-	msg='用户当前不在线!'	
-	await write_data(writer,msg)
+	#用户不在线，发送离线消息
+	await redis_dml('rpush',LIST_USERMESSAGES_OF_USERID % to_userid,send_content)
+	await write_data(writer,f'[离线消息]{send_content}')
 
 
-def user_is_auth(writer):
+async def user_is_auth(writer):
 	"""判断用户是否认证"""
 	if writer in auth_wstream_map_userid.keys():
 		return True
 	return False
 
 
+async def get_offline_msg_of_userid(userid):
+	user_offline_messages_list=[]
+	offline_message_counts=await redis_query('llen',LIST_USERMESSAGES_OF_USERID % userid)
+	print(f"当前用户消息长度为{offline_message_counts}")
+	for _ in range(0,int(offline_message_counts)):
+		user_offline_message=await redis_query('lpop',LIST_USERMESSAGES_OF_USERID % userid)
+		user_offline_messages_list.append(user_offline_message)
+	return user_offline_messages_list
+
+
+async def push_offline_msg(writer,*args):
+	userid=int(args[0])
+	user_offline_messages_list=await get_offline_msg_of_userid(userid)
+	for user_offline_message in user_offline_messages_list:
+		await write_data(writer,user_offline_message.decode('utf-8'))
+
+async def update_auth(writer,*args): 
+	userid=int(args[0])
+	auth_userid_map_wstream[userid]=writer
+	auth_wstream_map_userid[writer]=userid
+
+async def check_args_validity(writer,cmd,*args):
+	if cmd == 'auth':
+		if len(args) != 2:
+			msg='提示:认证格式: [ auth userid pwd ]'
+			await write_data(writer,msg)
+			return False
+		try:
+			userid=int(args[0])
+		except:
+			msg='userid为整数!'
+			await write_data(writer,msg)
+			return False
+
+	elif cmd == 'msg':
+		if len(args) < 2:
+			msg='提示:消息格式: [ msg userid content ]'
+			await write_data(writer,msg)
+			return False
+		try:
+			to_userid=int(args[0])
+		except:
+			msg='userid为整数!'
+			await write_data(writer,msg)
+			return False
+			
+	return True
+		
+
 async def handler_client(reader,writer):
 	"""处理客户端连接"""
 	address=writer.get_extra_info('peername')
 	log=logging.getLogger('echo_{}_{}'.format(*address))
 	log.debug('收到新连接')
-
+	args_ok=True
 	while True:
-		if not user_is_auth(writer):
+		if not await user_is_auth(writer) and args_ok:
 			msg=u'请登陆！'
 			await write_data(writer,msg)
 
@@ -299,11 +335,32 @@ async def handler_client(reader,writer):
 		cmd=data.split(' ')[0]
 		args=data.split(' ')[1:]
 
-		if not user_is_auth(writer):
+		if not await user_is_auth(writer):
 			if cmd != 'auth':
 				continue
-			await user_auth(writer,*args)
+
+			if not await check_args_validity(writer,cmd,*args):
+				args_ok=False
+				continue
+			args_ok=True
+			if await user_auth(*args):
+				await offline_userid(*args)
+
+				await update_auth(writer,*args)
+
+				msg='认证成功!'
+				await write_data(writer,msg)
+
+				await push_offline_msg(writer,*args)
+			else:
+				msg='认证失败!'
+				await write_data(writer,msg)
+			
 		else:
+			if not await check_args_validity(writer,cmd,*args):
+				args_ok=False
+				continue
+			args_ok=True
 			if cmd == 'msg':
 				await send_user_msg(writer,*args)
 
