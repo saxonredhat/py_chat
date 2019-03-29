@@ -109,7 +109,9 @@ async def redis_dml(cmd,*args):
 	pool.close()
 	await pool.wait_closed()
 
+
 async def get_username_of_userid(userid):
+	"""获取userid对应的用户名"""
 	if await redis_query('exists',KV_USERID_GET_USERNAME % userid):
 		username=await redis_query('get',KV_USERID_GET_USERNAME % userid)
 		return username.decode('utf-8')
@@ -248,9 +250,15 @@ async def send_user_msg(writer,*args):
 		msg='系统不存在该userid!'	
 		await write_data(writer,msg)
 		return
+
 	from_username=await get_username_of_userid(from_userid)
 	to_username=await get_username_of_userid(to_userid)
-	send_content=f'[ {from_username}|UID:{from_userid} --> {to_username}|UID:{to_userid}]:'+content
+	send_content=f'[ {from_username}|UID:{from_userid} --> {to_username}|UID:{to_userid} ]:'+content
+
+	if to_userid == from_userid:
+		send_content=f'[ {from_username}|UID:{from_userid} ]:'+content
+		await write_data(writer,send_content)
+		return
 
 	if await userid_is_online(to_userid):
 		to_writer=auth_userid_map_wstream[to_userid]
@@ -270,6 +278,7 @@ async def user_is_auth(writer):
 
 
 async def get_offline_msg_of_userid(userid):
+	"获取userid对应的离线消息"
 	user_offline_messages_list=[]
 	offline_message_counts=await redis_query('llen',LIST_USERMESSAGES_OF_USERID % userid)
 	print(f"当前用户消息长度为{offline_message_counts}")
@@ -280,15 +289,19 @@ async def get_offline_msg_of_userid(userid):
 
 
 async def push_offline_msg(writer,*args):
+	"""推送离线消息"""
 	userid=int(args[0])
 	user_offline_messages_list=await get_offline_msg_of_userid(userid)
 	for user_offline_message in user_offline_messages_list:
 		await write_data(writer,user_offline_message.decode('utf-8'))
 
+
 async def update_auth(writer,*args): 
+	"""更新auth_userid_map_wstream和auth_wstream_map_userid"""
 	userid=int(args[0])
 	auth_userid_map_wstream[userid]=writer
 	auth_wstream_map_userid[writer]=userid
+
 
 async def check_args_validity(writer,cmd,*args):
 	if cmd == 'auth':
