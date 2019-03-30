@@ -2,13 +2,15 @@ import asyncio
 import aiomysql
 import aioredis
 
+import sys
 import struct
 import ssl
-import sys
+
+import time
 import logging
 
 
-SERVER_ADDRESS = ('localhost',10000)
+SERVER_ADDRESS = ('0.0.0.0',10000)
 logging.basicConfig(
 	level=logging.DEBUG,
 	format='%(name)s: %(message)s',
@@ -42,14 +44,15 @@ db_config={
 
 
 #SQL 模板
-QUERY_AUTH_SQL='select id from user where id=%s and password=%s'
+QUERY_AUTH_SQL='select password from user where id=%s'
 QUERY_USERID_IS_EXISTS_SQL='select id from user where id=%s'
 QUERY_USERNAME_OF_USERID_SQL='select username from user where id=%s'
 
 
 #redis配置
-redis_host='localhost'
-redis_port=6379
+#redis_host='localhost'
+#redis_port=6379
+redis_unix_socket='/var/run/redis/redis.sock'
 
 
 #redis KEY模板
@@ -58,20 +61,48 @@ KV_USERID_GET_USERNAME=u'kv_userid_get_username:userid:%s'
 LIST_USERMESSAGES_OF_USERID=u'list_usermessages_of_userid:userid:%s'
 
 
+#支持的命令列表
+cmd_list=['auth','msg','logout']
+
+
+#命令帮助
+cmd_help="""
+     ===============================================
+    |                                               |
+    |                命令使用说明:                  |
+    |                                               |
+     ===============================================
+    |命令          参数   参数     (说明)           |
+     ===============================================
+    |auth          UID    PASSWORD (登录系统)       |
+    |msg/m         UID    MESSAGE  (给用户发送消息) |
+     ===============================================
+    |命令                (说明)                     |
+     ===============================================
+    |logout              (退出)                     |
+     ===============================================
+"""
+
+
+
+async def get_custom_time_string(t_format="%Y-%m-%d %X"):
+	"""获取指定格式的时间字符串
+	   默认格式为"%Y-%m-%d %X"
+	"""
+	return time.strftime(t_format)
+
+
 async def get_db_pool():
 	"""获取mysql连接池"""
-	loop = asyncio.get_event_loop()
-	pool = await aiomysql.create_pool(**db_config,loop=loop)
-
+	pool = await aiomysql.create_pool(**db_config)
 	return pool
 
 
 async def get_redis_pool():
 	"""获取redis连接池"""
 	pool = await aioredis.create_pool(
-		(redis_host,redis_port),
+		redis_unix_socket,
 		minsize=5, maxsize=10)
-
 	return pool
 
 
@@ -119,8 +150,8 @@ async def get_username_of_userid(userid):
 		res=await db_query(QUERY_USERNAME_OF_USERID_SQL % userid)
 		if res:
 			username=res[0][0]
-			await redis_dml('set',KV_EXISTS_USERID % userid,username)
-			return username.decode('utf-8') 
+			await redis_dml('set',KV_USERID_GET_USERNAME % userid,username)
+			return username 
 	return ''
 
 
@@ -188,11 +219,11 @@ async def user_auth(*args):
 	userid=int(args[0])
 	pwd=args[1]
 
-	sql=QUERY_AUTH_SQL % (userid,pwd)
+	sql=QUERY_AUTH_SQL % (userid)
 	res=await db_query(sql)
 	if res:
-		return True
-
+		if res[0][0] == pwd:	
+			return True
 	return False
 
 
@@ -218,13 +249,18 @@ async def userid_is_online(userid):
 		return False
 
 
-async def offline_userid(*args):
+async def offline_userid(operator_type,*args):
 	"""下线用户"""
 	userid=int(args[0])
 	try:
 		writer=auth_userid_map_wstream[userid]
 
-		msg='您已被系统下线！'
+		if operator_type == 0:
+			msg='有用户登录您的账号,您已被挤下线！'
+		elif operator_type == 1:
+			msg='您已退出登录！'
+		else:
+			msg='您已退出系统！'
 		await write_data(writer,msg)
 
 	except Exception as e:
@@ -253,10 +289,11 @@ async def send_user_msg(writer,*args):
 
 	from_username=await get_username_of_userid(from_userid)
 	to_username=await get_username_of_userid(to_userid)
-	send_content=f'[ {from_username}|UID:{from_userid} --> {to_username}|UID:{to_userid} ]:'+content
+	custom_time=await get_custom_time_string()
+	send_content=f'{custom_time}\n[ {from_username}|UID:{from_userid} ]:{content}'
 
 	if to_userid == from_userid:
-		send_content=f'[ {from_username}|UID:{from_userid} ]:'+content
+		send_content=f'{custom_time}\n[ {from_username}|UID:{from_userid} ]:{content}'
 		await write_data(writer,send_content)
 		return
 
@@ -266,8 +303,9 @@ async def send_user_msg(writer,*args):
 			await write_data(writer,send_content)
 			return 
 	#用户不在线，发送离线消息
+	print("用户不在线，发送离线消息")
 	await redis_dml('rpush',LIST_USERMESSAGES_OF_USERID % to_userid,send_content)
-	await write_data(writer,f'[离线消息]{send_content}')
+	await write_data(writer,f'[离线消息]\n{send_content}')
 
 
 async def user_is_auth(writer):
@@ -279,13 +317,7 @@ async def user_is_auth(writer):
 
 async def get_offline_msg_of_userid(userid):
 	"获取userid对应的离线消息"
-	user_offline_messages_list=[]
-	offline_message_counts=await redis_query('llen',LIST_USERMESSAGES_OF_USERID % userid)
-	print(f"当前用户消息长度为{offline_message_counts}")
-	for _ in range(0,int(offline_message_counts)):
-		user_offline_message=await redis_query('lpop',LIST_USERMESSAGES_OF_USERID % userid)
-		user_offline_messages_list.append(user_offline_message)
-	return user_offline_messages_list
+	return await redis_query('lrange',LIST_USERMESSAGES_OF_USERID % userid,0,-1)
 
 
 async def push_offline_msg(writer,*args):
@@ -294,6 +326,7 @@ async def push_offline_msg(writer,*args):
 	user_offline_messages_list=await get_offline_msg_of_userid(userid)
 	for user_offline_message in user_offline_messages_list:
 		await write_data(writer,user_offline_message.decode('utf-8'))
+	await redis_query('del',LIST_USERMESSAGES_OF_USERID % userid)
 
 
 async def update_auth(writer,*args): 
@@ -337,8 +370,9 @@ async def handler_client(reader,writer):
 	log=logging.getLogger('echo_{}_{}'.format(*address))
 	log.debug('收到新连接')
 	args_ok=True
+	cmd_ok=True
 	while True:
-		if not await user_is_auth(writer) and args_ok:
+		if not await user_is_auth(writer) and cmd_ok and args_ok:
 			msg=u'请登陆！'
 			await write_data(writer,msg)
 
@@ -347,6 +381,17 @@ async def handler_client(reader,writer):
 			break
 		cmd=data.split(' ')[0]
 		args=data.split(' ')[1:]
+
+		if cmd == '?' or cmd == 'help':
+			await write_data(writer,f'{cmd_help}')
+			cmd_ok=False
+			continue
+		elif cmd not in cmd_list:
+			await write_data(writer,'输入的命令不支持,请使用 help 或 ? 查看帮助!')
+			cmd_ok=False
+			continue
+
+		cmd_ok=True
 
 		if not await user_is_auth(writer):
 			if cmd != 'auth':
@@ -357,7 +402,7 @@ async def handler_client(reader,writer):
 				continue
 			args_ok=True
 			if await user_auth(*args):
-				await offline_userid(*args)
+				await offline_userid(0,*args)
 
 				await update_auth(writer,*args)
 
@@ -376,6 +421,13 @@ async def handler_client(reader,writer):
 			args_ok=True
 			if cmd == 'msg':
 				await send_user_msg(writer,*args)
+
+			elif cmd == 'logout':
+				userid=await get_userid_of_wstream(writer)
+				await offline_userid(1,userid)
+
+			elif cmd == 'auth':
+				await write_data(writer,'您已登录！')
 
 
 context=ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
